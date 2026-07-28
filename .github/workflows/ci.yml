@@ -23,6 +23,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
       - name: Ensure dist is up to date
         run: |
           git diff --exit-code dist/ || {

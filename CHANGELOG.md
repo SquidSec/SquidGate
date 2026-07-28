@@ -1,6 +1,8 @@
 # Changelog
 
-All notable changes to **SquidGate** are documented here.
+All notable changes to **SquidGate** ([SquidSec](https://squidoffense.com/)) are documented here.
+
+Release tags follow BloodBash-style: **`v{semver}-build.{N}`**, with floating **`v1`** / **`v1.0`**.
 
 ## [1.0.0] — 2026-07-28
 
@@ -13,4 +15,6 @@ All notable changes to **SquidGate** are documented here.
 - Configurable `block_on`, confidence filter, custom rules  
 - GitHub Check Run (`SquidGate`) + line annotations + optional PR comment  
 - Unit tests for config, prompts, parsing, checks  
-- Docs: configuration, privacy, development  
+- SquidSec branding (logo, About section) aligned with BloodBash  
+- CI release pipeline: `v1.0.0-build.N` + floating `v1` / `v1.0`  
+- 20 language sample PRs  

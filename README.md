@@ -1,32 +1,48 @@
 # SquidGate
 
-[![CI](https://github.com/SquidSec/SquidGate/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SquidSec/SquidGate/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![GitHub Action](https://img.shields.io/badge/GitHub%20Action-ready-2088FF?logo=githubactions&logoColor=white)](action.yml)
-[![Node](https://img.shields.io/badge/node-20-green?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+<p align="center">
+  <a href="https://squidoffense.com/">
+    <img src="assets/squidsec-logo.png" alt="SquidSec logo" width="180">
+  </a>
+</p>
 
-**LLM-powered PR security gate for GitHub**  
-*by [SquidSec](https://www.SquidOffense.com)*
+<p align="center">
+  <strong>A SquidSec Open Source Project</strong><br>
+  <a href="https://squidoffense.com/">SquidOffense.com</a> ·
+  <a href="https://github.com/SquidSec/SquidGate">GitHub</a>
+</p>
 
-> One workflow. Every pull request analyzed for security issues.  
-> Findings above your threshold fail the check and can block merge.
+<p align="center">
+  <a href="https://github.com/SquidSec/SquidGate/actions/workflows/ci.yml"><img src="https://github.com/SquidSec/SquidGate/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/SquidSec/SquidGate/actions/workflows/release.yml"><img src="https://github.com/SquidSec/SquidGate/actions/workflows/release.yml/badge.svg" alt="Build and Release"></a>
+  <a href="https://github.com/SquidSec/SquidGate/releases/latest"><img src="https://img.shields.io/github/v/release/SquidSec/SquidGate?label=latest%20build" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="action.yml"><img src="https://img.shields.io/badge/GitHub%20Action-ready-2088FF?logo=githubactions&logoColor=white" alt="GitHub Action"></a>
+</p>
 
-Language-agnostic. You choose (and pay for) the model — OpenAI, Anthropic, Google, Azure, **Grok / xAI**, Ollama, or any OpenAI-compatible endpoint.
+**SquidGate** is an open source LLM-powered **PR security gate** for GitHub, created and managed by **[SquidSec](https://squidoffense.com/)**. It analyzes pull request diffs, posts annotated findings, and fails the check when issues cross your severity threshold — so you can block merges with standard branch protection.
+
+| | |
+|--|--|
+| **Organization** | [SquidSec](https://squidoffense.com/) |
+| **Website** | [https://squidoffense.com/](https://squidoffense.com/) |
+| **App version** | **v1.0.0** |
+| **Latest release** | [![GitHub release](https://img.shields.io/github/v/release/SquidSec/SquidGate)](https://github.com/SquidSec/SquidGate/releases/latest) |
+| **Pin in workflows** | `SquidSec/SquidGate@v1` |
+| **License** | [MIT](LICENSE) |
+| **Runtime** | Node 20 (bundled action) |
+
+Merges to `main` automatically run tests, rebuild the action bundle, and publish a GitHub Release (tag `v1.0.0-build.N`). The floating tags **`v1`** and **`v1.0`** always point at the latest successful build for that line.
 
 ---
 
-## Why SquidGate?
+## About SquidSec
 
-| | Traditional SAST | SquidGate |
-|---|---|---|
-| Languages | Per-language rules | Any text-based source |
-| Setup | Days of tuning | **~2 minutes** |
-| Context | Whole-repo noise | **Diff-first** + context window |
-| Model | Fixed engine | **Your** LLM |
-| Merge gate | Separate tooling | Native GitHub Check |
-| Privacy | Vendor by default | **Only** your endpoint |
+SquidGate is built and maintained by **[SquidSec](https://squidoffense.com/)** for the security community — appsec engineers, platform teams, and developers who want a merge-blocking PR gate without standing up a full SAST platform.
 
-Strict by default (OWASP / CWE-oriented). Relax when you mean to.
+- **Website:** [https://squidoffense.com/](https://squidoffense.com/)
+- **Project:** [https://github.com/SquidSec/SquidGate](https://github.com/SquidSec/SquidGate)
+- **Related:** [BloodBash](https://github.com/SquidSec/BloodBash) · [SquidScanner](https://github.com/DotNetRussell/SquidScanner)
 
 ---
 
@@ -68,7 +84,7 @@ jobs:
 
 | Name | Value |
 |------|--------|
-| `LLM_API_KEY` | Your provider key |
+| `LLM_API_KEY` | Your provider key (OpenAI, xAI, Anthropic, …) |
 
 ### 3. Block merges (recommended)
 
@@ -83,18 +99,17 @@ Open a PR. Done.
 
 ## Try it on your language
 
-We keep **20 open sample PRs** — one per major language — each with intentional findings so you can see SquidGate in action:
+**20 open sample PRs** — one per major language — each with intentional findings:
 
 **[Browse language sample PRs →](examples/README.md)**
 
 | | | | |
 |--|--|--|--|
-| [JavaScript](https://github.com/SquidSec/SquidGate/labels/sample%3Ajavascript) | [TypeScript](https://github.com/SquidSec/SquidGate/labels/sample%3Atypescript) | [Python](https://github.com/SquidSec/SquidGate/labels/sample%3Apython) | [Java](https://github.com/SquidSec/SquidGate/labels/sample%3Ajava) |
-| [C#](https://github.com/SquidSec/SquidGate/labels/sample%3Acsharp) | [Go](https://github.com/SquidSec/SquidGate/labels/sample%3Ago) | [Rust](https://github.com/SquidSec/SquidGate/labels/sample%3Arust) | [C++](https://github.com/SquidSec/SquidGate/labels/sample%3Acpp) |
-| [C](https://github.com/SquidSec/SquidGate/labels/sample%3Ac) | [PHP](https://github.com/SquidSec/SquidGate/labels/sample%3Aphp) | [Ruby](https://github.com/SquidSec/SquidGate/labels/sample%3Aruby) | [Swift](https://github.com/SquidSec/SquidGate/labels/sample%3Aswift) |
-| [Kotlin](https://github.com/SquidSec/SquidGate/labels/sample%3Akotlin) | [Scala](https://github.com/SquidSec/SquidGate/labels/sample%3Ascala) | [Shell](https://github.com/SquidSec/SquidGate/labels/sample%3Ashell) | [Dart](https://github.com/SquidSec/SquidGate/labels/sample%3Adart) |
-| [PowerShell](https://github.com/SquidSec/SquidGate/labels/sample%3Apowershell) | [SQL](https://github.com/SquidSec/SquidGate/labels/sample%3Asql) | [Perl](https://github.com/SquidSec/SquidGate/labels/sample%3Aperl) | [Lua](https://github.com/SquidSec/SquidGate/labels/sample%3Alua) |
-
+| [JavaScript](https://github.com/SquidSec/SquidGate/pull/2) | [TypeScript](https://github.com/SquidSec/SquidGate/pull/3) | [Python](https://github.com/SquidSec/SquidGate/pull/4) | [Java](https://github.com/SquidSec/SquidGate/pull/5) |
+| [C#](https://github.com/SquidSec/SquidGate/pull/6) | [Go](https://github.com/SquidSec/SquidGate/pull/7) | [Rust](https://github.com/SquidSec/SquidGate/pull/8) | [C++](https://github.com/SquidSec/SquidGate/pull/9) |
+| [C](https://github.com/SquidSec/SquidGate/pull/10) | [PHP](https://github.com/SquidSec/SquidGate/pull/11) | [Ruby](https://github.com/SquidSec/SquidGate/pull/12) | [Swift](https://github.com/SquidSec/SquidGate/pull/13) |
+| [Kotlin](https://github.com/SquidSec/SquidGate/pull/14) | [Scala](https://github.com/SquidSec/SquidGate/pull/15) | [Shell](https://github.com/SquidSec/SquidGate/pull/16) | [Dart](https://github.com/SquidSec/SquidGate/pull/17) |
+| [PowerShell](https://github.com/SquidSec/SquidGate/pull/18) | [SQL](https://github.com/SquidSec/SquidGate/pull/19) | [Perl](https://github.com/SquidSec/SquidGate/pull/20) | [Lua](https://github.com/SquidSec/SquidGate/pull/21) |
 
 ---
 
@@ -110,6 +125,19 @@ We keep **20 open sample PRs** — one per major language — each with intentio
 ```
 
 Key: [console.x.ai](https://console.x.ai/)
+
+---
+
+## Why SquidGate?
+
+| | Traditional SAST | SquidGate |
+|---|---|---|
+| Languages | Per-language rules | Any text-based source |
+| Setup | Days of tuning | **~2 minutes** |
+| Context | Whole-repo noise | **Diff-first** + context |
+| Model | Fixed engine | **Your** LLM |
+| Merge gate | Separate tooling | Native GitHub Check |
+| Privacy | Vendor by default | **Only** your endpoint |
 
 ---
 
@@ -130,9 +158,7 @@ policy:
   categories:
     secrets: true
     injection: true
-    # all categories on by default — set false to disable
-  custom_rules:
-    - "Never log PII or session tokens"
+  custom_rules: []
 
 context:
   lines_before: 30
@@ -155,10 +181,33 @@ Full reference: [docs/configuration.md](docs/configuration.md) · Example: [.git
 - SQL / command / XSS / SSRF / path traversal  
 - Insecure deserialization  
 - Broken authn / authz patterns  
-- Weak crypto (MD5/SHA1 for security, ECB, hardcoded IVs)  
-- Dangerous APIs (`eval`, `exec`, `pickle`, `yaml.load`, …)  
-- Sensitive data in logs / errors  
+- Weak crypto · dangerous APIs (`eval`, `exec`, `pickle`, …)  
 - Patterns aligned with **OWASP Top 10**, **API Security Top 10**, **CWE Top 25**
+
+---
+
+## Versions & tags
+
+| Tag | Meaning | Use when |
+|-----|---------|----------|
+| `v1` | Latest stable major (floating) | **Recommended** for most repos |
+| `v1.0` | Latest 1.0.x line (floating) | Minor pin |
+| `v1.0.0` | Exact semver release | Rare; prefer build tags below |
+| `v1.0.0-build.N` | Immutable CI build from `main` | Audit / pin to a known build |
+
+```yaml
+# Recommended
+uses: SquidSec/SquidGate@v1
+
+# Pin to an immutable build
+uses: SquidSec/SquidGate@v1.0.0-build.12
+
+# Or full commit SHA
+uses: SquidSec/SquidGate@abc123def
+```
+
+**All releases:** https://github.com/SquidSec/SquidGate/releases  
+**Latest:** https://github.com/SquidSec/SquidGate/releases/latest  
 
 ---
 
@@ -228,16 +277,6 @@ npm run build
 ```
 
 See [docs/development.md](docs/development.md) · [CONTRIBUTING.md](CONTRIBUTING.md)
-
----
-
-## SquidSec
-
-Built by **[SquidSec](https://www.SquidOffense.com)** — security tooling that teams actually ship.
-
-- [SquidOffense.com](https://www.SquidOffense.com)  
-- [github.com/SquidSec](https://github.com/SquidSec)  
-- [SquidScanner](https://github.com/DotNetRussell/SquidScanner) — AI attack-surface analysis  
 
 ---
 

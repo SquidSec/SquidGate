@@ -1,6 +1,10 @@
 # Contributing to SquidGate
 
-Thanks for helping. Built by [SquidSec](https://www.SquidOffense.com).
+<p align="center">
+  <a href="https://squidoffense.com/"><img src="assets/squidsec-logo.png" alt="SquidSec" width="100"></a>
+</p>
+
+Thanks for helping. **SquidGate** is a [SquidSec](https://squidoffense.com/) open source project.
 
 ## Quick path
 

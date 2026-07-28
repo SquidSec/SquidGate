@@ -1,47 +1,53 @@
 # SquidGate language samples
 
+<p align="center">
+  <a href="https://squidoffense.com/">
+    <img src="../assets/squidsec-logo.png" alt="SquidSec logo" width="120">
+  </a>
+</p>
+
+<p align="center"><strong>A SquidSec Open Source Project</strong> · <a href="https://squidoffense.com/">SquidOffense.com</a></p>
+
 Open a **sample PR** for your language to see SquidGate annotate real findings (hardcoded secrets, injection, dangerous APIs).
 
 Each PR adds one small demo file under `examples/<language>/` with **intentional** vulnerabilities. Do not copy these patterns into production code.
 
 | # | Language | Sample PR |
 |---|----------|-----------|
-| 1 | JavaScript | [sample/javascript](https://github.com/SquidSec/SquidGate/compare/main...sample/javascript?expand=1) |
-| 2 | TypeScript | [sample/typescript](https://github.com/SquidSec/SquidGate/compare/main...sample/typescript?expand=1) |
-| 3 | Python | [sample/python](https://github.com/SquidSec/SquidGate/compare/main...sample/python?expand=1) |
-| 4 | Java | [sample/java](https://github.com/SquidSec/SquidGate/compare/main...sample/java?expand=1) |
-| 5 | C# | [sample/csharp](https://github.com/SquidSec/SquidGate/compare/main...sample/csharp?expand=1) |
-| 6 | Go | [sample/go](https://github.com/SquidSec/SquidGate/compare/main...sample/go?expand=1) |
-| 7 | Rust | [sample/rust](https://github.com/SquidSec/SquidGate/compare/main...sample/rust?expand=1) |
-| 8 | C++ | [sample/cpp](https://github.com/SquidSec/SquidGate/compare/main...sample/cpp?expand=1) |
-| 9 | C | [sample/c](https://github.com/SquidSec/SquidGate/compare/main...sample/c?expand=1) |
-| 10 | PHP | [sample/php](https://github.com/SquidSec/SquidGate/compare/main...sample/php?expand=1) |
-| 11 | Ruby | [sample/ruby](https://github.com/SquidSec/SquidGate/compare/main...sample/ruby?expand=1) |
-| 12 | Swift | [sample/swift](https://github.com/SquidSec/SquidGate/compare/main...sample/swift?expand=1) |
-| 13 | Kotlin | [sample/kotlin](https://github.com/SquidSec/SquidGate/compare/main...sample/kotlin?expand=1) |
-| 14 | Scala | [sample/scala](https://github.com/SquidSec/SquidGate/compare/main...sample/scala?expand=1) |
-| 15 | Shell | [sample/shell](https://github.com/SquidSec/SquidGate/compare/main...sample/shell?expand=1) |
-| 16 | Dart | [sample/dart](https://github.com/SquidSec/SquidGate/compare/main...sample/dart?expand=1) |
-| 17 | PowerShell | [sample/powershell](https://github.com/SquidSec/SquidGate/compare/main...sample/powershell?expand=1) |
-| 18 | SQL | [sample/sql](https://github.com/SquidSec/SquidGate/compare/main...sample/sql?expand=1) |
-| 19 | Perl | [sample/perl](https://github.com/SquidSec/SquidGate/compare/main...sample/perl?expand=1) |
-| 20 | Lua | [sample/lua](https://github.com/SquidSec/SquidGate/compare/main...sample/lua?expand=1) |
-
-After the sample PRs are opened, this table is updated with direct PR links in the README root “Try it” section.
+| 1 | JavaScript | [#2](https://github.com/SquidSec/SquidGate/pull/2) |
+| 2 | TypeScript | [#3](https://github.com/SquidSec/SquidGate/pull/3) |
+| 3 | Python | [#4](https://github.com/SquidSec/SquidGate/pull/4) |
+| 4 | Java | [#5](https://github.com/SquidSec/SquidGate/pull/5) |
+| 5 | C# | [#6](https://github.com/SquidSec/SquidGate/pull/6) |
+| 6 | Go | [#7](https://github.com/SquidSec/SquidGate/pull/7) |
+| 7 | Rust | [#8](https://github.com/SquidSec/SquidGate/pull/8) |
+| 8 | C++ | [#9](https://github.com/SquidSec/SquidGate/pull/9) |
+| 9 | C | [#10](https://github.com/SquidSec/SquidGate/pull/10) |
+| 10 | PHP | [#11](https://github.com/SquidSec/SquidGate/pull/11) |
+| 11 | Ruby | [#12](https://github.com/SquidSec/SquidGate/pull/12) |
+| 12 | Swift | [#13](https://github.com/SquidSec/SquidGate/pull/13) |
+| 13 | Kotlin | [#14](https://github.com/SquidSec/SquidGate/pull/14) |
+| 14 | Scala | [#15](https://github.com/SquidSec/SquidGate/pull/15) |
+| 15 | Shell | [#16](https://github.com/SquidSec/SquidGate/pull/16) |
+| 16 | Dart | [#17](https://github.com/SquidSec/SquidGate/pull/17) |
+| 17 | PowerShell | [#18](https://github.com/SquidSec/SquidGate/pull/18) |
+| 18 | SQL | [#19](https://github.com/SquidSec/SquidGate/pull/19) |
+| 19 | Perl | [#20](https://github.com/SquidSec/SquidGate/pull/20) |
+| 20 | Lua | [#21](https://github.com/SquidSec/SquidGate/pull/21) |
 
 ## What you should see
 
-On each sample PR, SquidGate should:
+1. Check run named **SquidGate**  
+2. Line annotations on the sample file  
+3. PR comment summarizing findings  
+4. Check **failure** when severity ≥ `block_on` (default `high`)  
 
-1. Create a **SquidGate** check run  
-2. Annotate lines (secret / injection / dangerous function)  
-3. Comment on the PR with a summary  
-4. **Fail** the check when severity ≥ `block_on` (default `high`)  
-
-## Run the same patterns on your repo
+## Use on your repo
 
 ```yaml
 - uses: SquidSec/SquidGate@v1
   with:
     llm-api-key: ${{ secrets.LLM_API_KEY }}
 ```
+
+Pin an immutable build: `SquidSec/SquidGate@v1.0.0-build.N` — see [Releases](https://github.com/SquidSec/SquidGate/releases).

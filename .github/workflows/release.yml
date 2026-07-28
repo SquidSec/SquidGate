@@ -1,0 +1,149 @@
+name: Build and Release
+
+# Every merge/push to main: test, rebuild dist, publish GitHub Release
+# Tags: v{version}-build.{N}  + floating v1 / v1.0  (BloodBash-style)
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'examples/**'
+      - 'docs/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm test
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Verify dist is committed and current
+        run: |
+          git diff --exit-code dist/ || {
+            echo "::error::dist/ is stale. Run npm run build and commit dist/ before merge."
+            exit 1
+          }
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: squidgate-dist
+          path: |
+            dist/index.js
+            dist/licenses.txt
+            action.yml
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare release metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          BASE_VERSION=$(node -p "require('./package.json').version")
+          RUN="${{ github.run_number }}"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          MAJOR=$(echo "$BASE_VERSION" | cut -d. -f1)
+          MINOR=$(echo "$BASE_VERSION" | cut -d. -f1,2)
+          TAG="v${BASE_VERSION}-build.${RUN}"
+          RELEASE_NAME="SquidGate ${BASE_VERSION} (build ${RUN})"
+          {
+            echo "base_version=${BASE_VERSION}"
+            echo "major=${MAJOR}"
+            echo "minor=${MINOR}"
+            echo "tag=${TAG}"
+            echo "release_name=${RELEASE_NAME}"
+            echo "short_sha=${SHORT_SHA}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved tag=${TAG}"
+
+      - name: Create annotated tags (build + floating major/minor)
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          MAJOR="v${{ steps.meta.outputs.major }}"
+          MINOR="v${{ steps.meta.outputs.minor }}"
+          SEMVER="v${{ steps.meta.outputs.base_version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Immutable build tag
+          git tag -a "$TAG" -m "SquidGate ${{ steps.meta.outputs.base_version }} build ${{ github.run_number }}"
+          git push origin "$TAG"
+
+          # Floating tags consumers pin: v1, v1.0, and exact semver
+          for T in "$MAJOR" "$MINOR" "$SEMVER"; do
+            git tag -f -a "$T" -m "SquidGate floating tag $T → $TAG"
+            git push -f origin "refs/tags/$T"
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.release_name }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          make_latest: true
+          files: |
+            dist/index.js
+            action.yml
+          body: |
+            ## SquidSec SquidGate ${{ steps.meta.outputs.base_version }} — build ${{ github.run_number }}
+
+            **SquidGate** is an open source project created and managed by **[SquidSec](https://squidoffense.com/)**.
+
+            LLM-powered PR security gate for GitHub.
+
+            ### Use in workflows
+
+            ```yaml
+            - uses: SquidSec/SquidGate@v1
+              with:
+                llm-api-key: ${{ '${{ secrets.LLM_API_KEY }}' }}
+            ```
+
+            | Tag | Points to |
+            |-----|-----------|
+            | `v1` | Latest stable major (this build) |
+            | `v${{ steps.meta.outputs.minor }}` | Latest ${{ steps.meta.outputs.minor }}.x |
+            | `${{ steps.meta.outputs.tag }}` | This immutable build |
+
+            **Commit:** `${{ steps.meta.outputs.short_sha }}`  
+            **Website:** https://squidoffense.com/  
+            **Docs:** https://github.com/SquidSec/SquidGate#60-second-setup

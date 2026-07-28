@@ -13,7 +13,7 @@
 If you find a security issue in **SquidGate**:
 
 1. **Do not** open a public issue for exploitable bugs.  
-2. Contact maintainers via [SquidOffense.com](https://www.SquidOffense.com) / SquidSec org.  
+2. Contact maintainers via [squidoffense.com](https://squidoffense.com/) / SquidSec org.  
 3. Include: description, impact, repro, suggested fix.  
 
 We aim to acknowledge within **72 hours**.
