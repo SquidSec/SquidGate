@@ -1,0 +1,45 @@
+{
+  "name": "security-scan",
+  "version": "1.0.0",
+  "description": "LLM-powered GitHub Action security gate for pull requests",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc && ncc build lib/index.js -o dist",
+    "build:ts": "tsc",
+    "package": "ncc build lib/index.js -o dist --license licenses.txt",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src --ext .ts"
+  },
+  "keywords": [
+    "github-action",
+    "security",
+    "sast",
+    "llm",
+    "pr-check",
+    "owasp"
+  ],
+  "author": "security-scan contributors",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "@actions/core": "^1.10.1",
+    "@actions/exec": "^1.1.1",
+    "@actions/github": "^6.0.0",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@jest/globals": "^30.4.1",
+    "@types/jest": "^30.0.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^26.1.2",
+    "@typescript-eslint/eslint-plugin": "^8.65.0",
+    "@typescript-eslint/parser": "^8.65.0",
+    "@vercel/ncc": "^0.44.1",
+    "eslint": "^10.8.0",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.12",
+    "typescript": "^6.0.3"
+  }
+}

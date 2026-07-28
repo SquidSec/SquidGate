@@ -1,0 +1,8 @@
+node_modules/
+lib/
+*.log
+.env
+.DS_Store
+# dist/ is committed for the GitHub Action (ncc bundle)
+# coverage/
+coverage/

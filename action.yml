@@ -1,0 +1,44 @@
+name: 'security-scan'
+description: 'LLM-powered PR security gate. Analyzes diffs for security issues and blocks merges on high-severity findings.'
+author: 'Security Scan Contributors'
+
+inputs:
+  config-path:
+    description: 'Path to config file'
+    required: false
+    default: '.github/security-scan.yml'
+  llm-provider:
+    description: 'Override LLM provider (openai | anthropic | azure | google | custom)'
+    required: false
+  llm-model:
+    description: 'Override LLM model name'
+    required: false
+  block-on:
+    description: 'Override minimum severity to block on (critical | high | medium | low | none)'
+    required: false
+  github-token:
+    description: 'GitHub token with checks:write, pull-requests:write, contents:read'
+    required: true
+    default: ${{ github.token }}
+  llm-api-key:
+    description: 'LLM provider API key (recommended to use secrets)'
+    required: true
+  llm-base-url:
+    description: 'Optional base URL for custom/OpenAI-compatible or Azure endpoint (advanced)'
+    required: false
+
+outputs:
+  findings-count:
+    description: 'Total number of findings reported by the LLM'
+  blocking-findings-count:
+    description: 'Number of findings that meet or exceed the block_on threshold'
+  conclusion:
+    description: 'Final check conclusion: success | failure | neutral'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'shield'
+  color: 'red'

@@ -1,0 +1,27 @@
+name: Security Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run security-scan
+        uses: ./   # for local testing; in real use: your-org/security-scan@v1
+        with:
+          llm-api-key: ${{ secrets.LLM_API_KEY }}
+          # github-token: ${{ secrets.GITHUB_TOKEN }}  # default is sufficient
+          # block-on: critical
+          # llm-provider: anthropic
+          # llm-model: claude-3-5-sonnet-20241022
