@@ -1,12 +1,10 @@
-# .github/security-scan.yml
-# Default strict security policy for PRs
+# SquidGate config — copy to .github/squidgate.yml
+# https://github.com/SquidSec/SquidGate
 version: 1
 
 llm:
-  provider: custom   # openai | anthropic | azure | google | custom
-  model: grok-build-0.1
-  # For xAI Grok: base url is passed via action input or here if using openai provider with custom endpoint
-
+  provider: openai          # openai | anthropic | azure | google | custom
+  model: gpt-4o             # or claude-*, gemini-*, grok-*, etc.
 
 policy:
   block_on: high            # critical | high | medium | low | none

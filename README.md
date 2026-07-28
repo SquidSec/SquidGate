@@ -1,23 +1,44 @@
-# security-scan
+# SquidGate
 
-LLM-powered GitHub Action that acts as a configurable PR security gate.
+[![CI](https://github.com/SquidSec/SquidGate/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SquidSec/SquidGate/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![GitHub Action](https://img.shields.io/badge/GitHub%20Action-ready-2088FF?logo=githubactions&logoColor=white)](action.yml)
+[![Node](https://img.shields.io/badge/node-20-green?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 
-It analyzes the diff of a pull request using an LLM (chosen and paid for by you) and fails the required status check when findings meet or exceed your configured severity threshold.
+**LLM-powered PR security gate for GitHub**  
+*by [SquidSec](https://www.SquidOffense.com)*
 
-- Language-agnostic (any text)
-- Diff-first + configurable context
-- Strict-by-default, fully tunable
-- Supports OpenAI, Anthropic, Google, Azure, custom OpenAI-compatible endpoints
-- Creates annotated GitHub Checks + optional PR comment
-- Blocks merges via standard "Require status checks"
+> One workflow. Every pull request analyzed for security issues.  
+> Findings above your threshold fail the check and can block merge.
 
-## Quick Start
+Language-agnostic. You choose (and pay for) the model — OpenAI, Anthropic, Google, Azure, **Grok / xAI**, Ollama, or any OpenAI-compatible endpoint.
 
-1. Add the workflow:
+---
+
+## Why SquidGate?
+
+| | Traditional SAST | SquidGate |
+|---|---|---|
+| Languages | Per-language rules | Any text-based source |
+| Setup | Days of tuning | **~2 minutes** |
+| Context | Whole-repo noise | **Diff-first** + context window |
+| Model | Fixed engine | **Your** LLM |
+| Merge gate | Separate tooling | Native GitHub Check |
+| Privacy | Vendor by default | **Only** your endpoint |
+
+Strict by default (OWASP / CWE-oriented). Relax when you mean to.
+
+---
+
+## 60-second setup
+
+### 1. Add the workflow
+
+Create `.github/workflows/squidgate.yml`:
 
 ```yaml
-# .github/workflows/security-scan.yml
-name: Security Scan
+name: SquidGate
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -28,89 +49,181 @@ permissions:
   checks: write
 
 jobs:
-  security-scan:
+  squidgate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: your-org/security-scan@v1
+
+      - name: SquidGate
+        uses: SquidSec/SquidGate@v1
         with:
           llm-api-key: ${{ secrets.LLM_API_KEY }}
 ```
 
-2. Store your LLM key as a repository secret `LLM_API_KEY`.
+### 2. Add your LLM API key
 
-3. (Recommended) Enable branch protection: **Require status checks** → select `security-scan`.
+**Settings → Secrets and variables → Actions → New repository secret**
 
-## Configuration
+| Name | Value |
+|------|--------|
+| `LLM_API_KEY` | Your provider key |
 
-Primary configuration lives in `.github/security-scan.yml` (or override via action inputs).
+### 3. Block merges (recommended)
 
-See `.github/security-scan.yml.example` for the full reference.
+**Settings → Branches → Branch protection** on `main`:
 
-### Minimal config (strict defaults)
+- Require status checks to pass  
+- Select **`SquidGate`**
+
+Open a PR. Done.
+
+---
+
+## Using Grok (xAI)
+
+```yaml
+- uses: SquidSec/SquidGate@v1
+  with:
+    llm-api-key: ${{ secrets.LLM_API_KEY }}
+    llm-provider: custom
+    llm-model: grok-build-0.1
+    llm-base-url: https://api.x.ai/v1
+```
+
+Key: [console.x.ai](https://console.x.ai/)
+
+---
+
+## Configuration (optional)
+
+Defaults are production-ready. Override with `.github/squidgate.yml`:
 
 ```yaml
 version: 1
+
 llm:
   provider: openai
   model: gpt-4o
+
 policy:
-  block_on: high
+  block_on: high            # critical | high | medium | low | none
+  min_confidence: medium
+  categories:
+    secrets: true
+    injection: true
+    # all categories on by default — set false to disable
+  custom_rules:
+    - "Never log PII or session tokens"
+
+context:
+  lines_before: 30
+  max_files: 50
+  max_diff_bytes: 500000
+
+output:
+  comment_on_pr: true
+  annotate_lines: true
+  fail_on_error: true
 ```
 
-### Key settings
+Full reference: [docs/configuration.md](docs/configuration.md) · Example: [.github/squidgate.yml.example](.github/squidgate.yml.example)
 
-- `policy.block_on`: `critical` | `high` | `medium` | `low` | `none`
-- `llm.provider`: `openai` | `anthropic` | `azure` | `google` | `custom`
-- All categories under `policy.categories` are enabled by default.
+---
 
-To relax, explicitly set `block_on: medium` or disable categories.
+## What it detects
 
-## Action Inputs
+- Hardcoded secrets / API keys / private keys  
+- SQL / command / XSS / SSRF / path traversal  
+- Insecure deserialization  
+- Broken authn / authz patterns  
+- Weak crypto (MD5/SHA1 for security, ECB, hardcoded IVs)  
+- Dangerous APIs (`eval`, `exec`, `pickle`, `yaml.load`, …)  
+- Sensitive data in logs / errors  
+- Patterns aligned with **OWASP Top 10**, **API Security Top 10**, **CWE Top 25**
 
-| Input           | Required | Default                    | Description                              |
-|-----------------|----------|----------------------------|------------------------------------------|
-| `github-token`  | No       | `${{ github.token }}`      | Needs `checks:write`, `pull-requests:write` |
-| `llm-api-key`   | Yes      | —                          | Your LLM provider key (use secrets!)     |
-| `config-path`   | No       | `.github/security-scan.yml`| Path to YAML config                      |
-| `llm-provider`  | No       | from config                | Override provider                        |
-| `llm-model`     | No       | from config                | Override model                           |
-| `block-on`      | No       | from config                | Override severity threshold              |
-| `llm-base-url`  | No       | —                          | For custom endpoints / Azure             |
+---
 
-## Supported Providers & Models (examples)
+## Action inputs
 
-- **openai**: `gpt-4o`, `gpt-4o-mini`, `o1-preview` (use models that support JSON mode)
-- **anthropic**: `claude-3-5-sonnet-20241022`, `claude-3-opus-20240229`
-- **google**: `gemini-1.5-pro`, `gemini-1.5-flash`
-- **azure**: Set `llm-provider: azure` + `llm-base-url`
-- **custom**: Any OpenAI-compatible server (Ollama, vLLM, LiteLLM, local, etc.)
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `llm-api-key` | **Yes** | — | Provider API key |
+| `github-token` | No | `${{ github.token }}` | `checks` + `pull-requests` + `contents` |
+| `config-path` | No | `.github/squidgate.yml` | Config path |
+| `llm-provider` | No | config / `openai` | `openai` \| `anthropic` \| `azure` \| `google` \| `custom` |
+| `llm-model` | No | config / `gpt-4o` | Model id |
+| `llm-base-url` | No | — | Azure / custom / xAI URL |
+| `block-on` | No | config / `high` | Minimum failing severity |
 
 ## Outputs
 
-- `findings-count`
-- `blocking-findings-count`
-- `conclusion`: `success` | `failure`
+| Output | Description |
+|--------|-------------|
+| `findings-count` | Findings after confidence filter |
+| `blocking-findings-count` | Findings ≥ `block_on` |
+| `conclusion` | `success` \| `failure` |
 
-## Privacy & Security
+---
 
-- Your code and diffs are sent **only** to the LLM endpoint you configure.
-- No data is stored by this action's maintainers.
-- Uses least-privilege permissions.
-- Supports private/self-hosted LLMs and self-hosted runners.
+## Privacy
+
+- Diffs go **only** to the LLM endpoint **you** configure  
+- SquidSec does **not** receive or store your code  
+- Least-privilege permissions; self-hosted runners + private models supported  
+
+→ [docs/privacy.md](docs/privacy.md)
+
+---
+
+## How it works
+
+```
+PR opened / updated
+        │
+        ▼
+  Unified diff (+ context)
+        │
+        ▼
+  Policy-aware prompts (temperature 0, JSON)
+        │
+        ▼
+  Your LLM
+        │
+        ▼
+  Filter → annotate → PR comment
+        │
+        ▼
+  Fail check if finding ≥ block_on
+```
+
+---
 
 ## Development
 
 ```bash
-npm install
-npm run build:ts
-npm run package
+git clone https://github.com/SquidSec/SquidGate.git
+cd SquidGate
+npm ci
+npm test
+npm run build
 ```
 
-The bundled `dist/index.js` is what the action executes.
+See [docs/development.md](docs/development.md) · [CONTRIBUTING.md](CONTRIBUTING.md)
+
+---
+
+## SquidSec
+
+Built by **[SquidSec](https://www.SquidOffense.com)** — security tooling that teams actually ship.
+
+- [SquidOffense.com](https://www.SquidOffense.com)  
+- [github.com/SquidSec](https://github.com/SquidSec)  
+- [SquidScanner](https://github.com/DotNetRussell/SquidScanner) — AI attack-surface analysis  
+
+---
 
 ## License
 
-MIT (or your choice)
+[MIT](LICENSE) © SquidSec

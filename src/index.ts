@@ -122,7 +122,7 @@ async function run(): Promise<void> {
     const token = core.getInput('github-token', { required: true });
     const apiKey = core.getInput('llm-api-key', { required: true });
 
-    const configPath = core.getInput('config-path') || '.github/security-scan.yml';
+    const configPath = core.getInput('config-path') || '.github/squidgate.yml';
     const overrideProvider = core.getInput('llm-provider');
     const overrideModel = core.getInput('llm-model');
     const overrideBlockOn = core.getInput('block-on') as any;

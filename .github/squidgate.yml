@@ -1,13 +1,12 @@
-# .github/security-scan.yml
-# Default strict security policy for PRs
+# SquidGate — dogfood config for this repository
 version: 1
 
 llm:
-  provider: openai   # openai | anthropic | azure | google | custom
-  model: gpt-4o      # or claude-3-5-sonnet-20241022, gemini-1.5-pro, etc.
+  provider: custom
+  model: grok-build-0.1
 
 policy:
-  block_on: high            # critical | high | medium | low | none
+  block_on: high
   min_confidence: medium
   categories:
     secrets: true

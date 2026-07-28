@@ -33,7 +33,7 @@ describe('checks', () => {
     expect(result.conclusion).toBe('failure');
     expect(result.blockingCount).toBe(1); // only the high one blocks on 'high'
     expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({
-      name: 'security-scan',
+      name: 'SquidGate',
       head_sha: 'sha123',
       conclusion: 'failure',
     }));

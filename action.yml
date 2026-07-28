@@ -1,12 +1,12 @@
-name: 'security-scan'
-description: 'LLM-powered PR security gate. Analyzes diffs for security issues and blocks merges on high-severity findings.'
-author: 'Security Scan Contributors'
+name: 'SquidGate'
+description: 'LLM-powered PR security gate by SquidSec. Analyzes diffs and blocks merges on high-severity findings.'
+author: 'SquidSec'
 
 inputs:
   config-path:
     description: 'Path to config file'
     required: false
-    default: '.github/security-scan.yml'
+    default: '.github/squidgate.yml'
   llm-provider:
     description: 'Override LLM provider (openai | anthropic | azure | google | custom)'
     required: false
@@ -21,15 +21,15 @@ inputs:
     required: true
     default: ${{ github.token }}
   llm-api-key:
-    description: 'LLM provider API key (recommended to use secrets)'
+    description: 'LLM provider API key (use repository secrets)'
     required: true
   llm-base-url:
-    description: 'Optional base URL for custom/OpenAI-compatible or Azure endpoint (advanced)'
+    description: 'Optional base URL for custom/OpenAI-compatible or Azure endpoint'
     required: false
 
 outputs:
   findings-count:
-    description: 'Total number of findings reported by the LLM'
+    description: 'Total number of findings after confidence filtering'
   blocking-findings-count:
     description: 'Number of findings that meet or exceed the block_on threshold'
   conclusion:

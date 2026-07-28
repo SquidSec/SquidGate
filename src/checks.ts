@@ -49,7 +49,7 @@ export async function createCheckRun(
   const check = await octokit.rest.checks.create({
     owner,
     repo,
-    name: 'security-scan',
+    name: 'SquidGate',
     head_sha: headSha,
     status: 'completed',
     conclusion: conclusion as any,

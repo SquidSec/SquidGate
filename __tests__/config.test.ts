@@ -2,7 +2,7 @@ import { loadConfig, DEFAULT_CONFIG, shouldBlock, filterFindings } from '../src/
 import * as fs from 'fs';
 import * as path from 'path';
 
-const tmpConfigPath = path.join(__dirname, 'temp-security-scan.yml');
+const tmpConfigPath = path.join(__dirname, 'temp-squidgate.yml');
 
 describe('config', () => {
   afterEach(() => {

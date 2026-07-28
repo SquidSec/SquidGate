@@ -5,7 +5,7 @@ jest.mock('../src/llm');
 
 describe('action claims via pieces', () => {
   it('filters and blocks according to policy (validates core security gate behavior)', () => {
-    const cfg = loadConfig('.github/security-scan.yml.example');
+    const cfg = loadConfig('.github/squidgate.yml.example');
     const findings = [
       { confidence: 'high', severity: 'high' },
       { confidence: 'medium', severity: 'medium' },

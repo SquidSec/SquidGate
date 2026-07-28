@@ -2,20 +2,30 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   test:
-    runs-on: ubuntu-latest   # Change to [self-hosted, linux] or your runner label as needed
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - run: npm run package
+      - name: Ensure dist is up to date
+        run: |
+          git diff --exit-code dist/ || {
+            echo "::error::dist/ is stale. Run npm run build and commit dist/"
+            exit 1
+          }
