@@ -81,6 +81,23 @@ Open a PR. Done.
 
 ---
 
+## Try it on your language
+
+We keep **20 open sample PRs** — one per major language — each with intentional findings so you can see SquidGate in action:
+
+**[Browse language sample PRs →](examples/README.md)**
+
+| | | | |
+|--|--|--|--|
+| [JavaScript](https://github.com/SquidSec/SquidGate/labels/sample%3Ajavascript) | [TypeScript](https://github.com/SquidSec/SquidGate/labels/sample%3Atypescript) | [Python](https://github.com/SquidSec/SquidGate/labels/sample%3Apython) | [Java](https://github.com/SquidSec/SquidGate/labels/sample%3Ajava) |
+| [C#](https://github.com/SquidSec/SquidGate/labels/sample%3Acsharp) | [Go](https://github.com/SquidSec/SquidGate/labels/sample%3Ago) | [Rust](https://github.com/SquidSec/SquidGate/labels/sample%3Arust) | [C++](https://github.com/SquidSec/SquidGate/labels/sample%3Acpp) |
+| [C](https://github.com/SquidSec/SquidGate/labels/sample%3Ac) | [PHP](https://github.com/SquidSec/SquidGate/labels/sample%3Aphp) | [Ruby](https://github.com/SquidSec/SquidGate/labels/sample%3Aruby) | [Swift](https://github.com/SquidSec/SquidGate/labels/sample%3Aswift) |
+| [Kotlin](https://github.com/SquidSec/SquidGate/labels/sample%3Akotlin) | [Scala](https://github.com/SquidSec/SquidGate/labels/sample%3Ascala) | [Shell](https://github.com/SquidSec/SquidGate/labels/sample%3Ashell) | [Dart](https://github.com/SquidSec/SquidGate/labels/sample%3Adart) |
+| [PowerShell](https://github.com/SquidSec/SquidGate/labels/sample%3Apowershell) | [SQL](https://github.com/SquidSec/SquidGate/labels/sample%3Asql) | [Perl](https://github.com/SquidSec/SquidGate/labels/sample%3Aperl) | [Lua](https://github.com/SquidSec/SquidGate/labels/sample%3Alua) |
+
+
+---
+
 ## Using Grok (xAI)
 
 ```yaml
