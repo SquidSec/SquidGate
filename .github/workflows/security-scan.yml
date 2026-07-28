@@ -21,7 +21,10 @@ jobs:
         uses: ./   # for local testing; in real use: your-org/security-scan@v1
         with:
           llm-api-key: ${{ secrets.LLM_API_KEY }}
+          llm-provider: custom
+          llm-model: grok-build-0.1
+          llm-base-url: https://api.x.ai/v1
           # github-token: ${{ secrets.GITHUB_TOKEN }}  # default is sufficient
-          # block-on: critical
-          # llm-provider: anthropic
-          # llm-model: claude-3-5-sonnet-20241022
+          # block-on: high
+          # To relax for testing: block-on: none
+

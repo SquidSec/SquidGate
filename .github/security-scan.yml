@@ -3,8 +3,10 @@
 version: 1
 
 llm:
-  provider: openai   # openai | anthropic | azure | google | custom
-  model: gpt-4o      # or claude-3-5-sonnet-20241022, gemini-1.5-pro, etc.
+  provider: custom   # openai | anthropic | azure | google | custom
+  model: grok-build-0.1
+  # For xAI Grok: base url is passed via action input or here if using openai provider with custom endpoint
+
 
 policy:
   block_on: high            # critical | high | medium | low | none
