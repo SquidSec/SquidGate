@@ -43,7 +43,7 @@ action.yml
 assets/         # SquidSec branding
 ```
 
-## Versioning & releases (BloodBash-style)
+## Versioning & releases
 
 | Tag | Created by | Purpose |
 |-----|------------|---------|

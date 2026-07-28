@@ -13,9 +13,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/SquidSec/SquidGate/actions/workflows/ci.yml"><img src="https://github.com/SquidSec/SquidGate/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/SquidSec/SquidGate/actions/workflows/release.yml"><img src="https://github.com/SquidSec/SquidGate/actions/workflows/release.yml/badge.svg" alt="Build and Release"></a>
-  <a href="https://github.com/SquidSec/SquidGate/releases/latest"><img src="https://img.shields.io/github/v/release/SquidSec/SquidGate?label=latest%20build" alt="Latest release"></a>
+  <a href="https://github.com/SquidSec/SquidGate/actions/workflows/ci.yml"><img src="https://github.com/SquidSec/SquidGate/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/SquidSec/SquidGate/actions/workflows/release.yml"><img src="https://github.com/SquidSec/SquidGate/actions/workflows/release.yml/badge.svg?branch=main" alt="Build and Release"></a>
+  <a href="https://github.com/SquidSec/SquidGate/releases/latest"><img src="https://img.shields.io/github/v/release/SquidSec/SquidGate?include_prereleases&sort=date&label=latest%20build&color=blue" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <a href="action.yml"><img src="https://img.shields.io/badge/GitHub%20Action-ready-2088FF?logo=githubactions&logoColor=white" alt="GitHub Action"></a>
 </p>
@@ -27,7 +27,7 @@
 | **Organization** | [SquidSec](https://squidoffense.com/) |
 | **Website** | [https://squidoffense.com/](https://squidoffense.com/) |
 | **App version** | **v1.0.0** |
-| **Latest release** | [![GitHub release](https://img.shields.io/github/v/release/SquidSec/SquidGate)](https://github.com/SquidSec/SquidGate/releases/latest) |
+| **Latest release** | [![GitHub release](https://img.shields.io/github/v/release/SquidSec/SquidGate?include_prereleases&sort=date&label=release&color=blue)](https://github.com/SquidSec/SquidGate/releases/latest) |
 | **Pin in workflows** | `SquidSec/SquidGate@v1` |
 | **License** | [MIT](LICENSE) |
 | **Runtime** | Node 20 (bundled action) |
@@ -42,7 +42,6 @@ SquidGate is built and maintained by **[SquidSec](https://squidoffense.com/)** f
 
 - **Website:** [https://squidoffense.com/](https://squidoffense.com/)
 - **Project:** [https://github.com/SquidSec/SquidGate](https://github.com/SquidSec/SquidGate)
-- **Related:** [BloodBash](https://github.com/SquidSec/BloodBash) · [SquidScanner](https://github.com/DotNetRussell/SquidScanner)
 
 ---
 
@@ -86,12 +85,16 @@ jobs:
 |------|--------|
 | `LLM_API_KEY` | Your provider key (OpenAI, xAI, Anthropic, …) |
 
-### 3. Block merges (recommended)
+### 3. Block merges when SquidGate finds issues
 
-**Settings → Branches → Branch protection** on `main`:
+**Settings → Rules → Rulesets** (or **Branches → Branch protection**) on `main`:
 
-- Require status checks to pass  
-- Select **`SquidGate`**
+- Require a pull request before merging  
+- Require status checks to pass:
+  - **`squidgate`** (workflow job)
+  - **`SquidGate`** (check run)
+
+When SquidGate reports findings at or above `block_on`, both checks **fail** and GitHub **blocks merge**.
 
 Open a PR. Done.
 

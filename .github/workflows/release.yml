@@ -1,7 +1,7 @@
 name: Build and Release
 
 # Every merge/push to main: test, rebuild dist, publish GitHub Release
-# Tags: v{version}-build.{N}  + floating v1 / v1.0  (BloodBash-style)
+# Tags: v{version}-build.{N}  + floating v1 / v1.0
 on:
   push:
     branches:
