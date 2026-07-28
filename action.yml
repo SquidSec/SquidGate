@@ -1,44 +1,44 @@
 name: 'SquidGate'
-description: 'LLM-powered PR security gate by SquidSec. Analyzes diffs and blocks merges on high-severity findings.'
+description: 'LLM-powered PR security gate. Scans diffs for secrets, injection, and OWASP issues — fails the check to block merge.'
 author: 'SquidSec'
-
-inputs:
-  config-path:
-    description: 'Path to config file'
-    required: false
-    default: '.github/squidgate.yml'
-  llm-provider:
-    description: 'Override LLM provider (openai | anthropic | azure | google | custom)'
-    required: false
-  llm-model:
-    description: 'Override LLM model name'
-    required: false
-  block-on:
-    description: 'Override minimum severity to block on (critical | high | medium | low | none)'
-    required: false
-  github-token:
-    description: 'GitHub token with checks:write, pull-requests:write, contents:read'
-    required: true
-    default: ${{ github.token }}
-  llm-api-key:
-    description: 'LLM provider API key (use repository secrets)'
-    required: true
-  llm-base-url:
-    description: 'Optional base URL for custom/OpenAI-compatible or Azure endpoint'
-    required: false
-
-outputs:
-  findings-count:
-    description: 'Total number of findings after confidence filtering'
-  blocking-findings-count:
-    description: 'Number of findings that meet or exceed the block_on threshold'
-  conclusion:
-    description: 'Final check conclusion: success | failure | neutral'
-
-runs:
-  using: 'node20'
-  main: 'dist/index.js'
 
 branding:
   icon: 'shield'
   color: 'red'
+
+inputs:
+  llm-api-key:
+    description: 'LLM provider API key (store as a repository secret, e.g. secrets.LLM_API_KEY)'
+    required: true
+  github-token:
+    description: 'GitHub token with checks:write, pull-requests:write, and contents:read'
+    required: true
+    default: ${{ github.token }}
+  config-path:
+    description: 'Path to SquidGate config YAML'
+    required: false
+    default: '.github/squidgate.yml'
+  llm-provider:
+    description: 'LLM provider: openai | anthropic | azure | google | custom'
+    required: false
+  llm-model:
+    description: 'Model id (e.g. gpt-4o, claude-3-5-sonnet, grok-build-0.1)'
+    required: false
+  llm-base-url:
+    description: 'Base URL for Azure, xAI, Ollama, or other OpenAI-compatible endpoints'
+    required: false
+  block-on:
+    description: 'Minimum severity that fails the check: critical | high | medium | low | none'
+    required: false
+
+outputs:
+  findings-count:
+    description: 'Number of findings after confidence filtering'
+  blocking-findings-count:
+    description: 'Number of findings at or above block_on severity'
+  conclusion:
+    description: 'Check conclusion: success | failure | neutral'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
