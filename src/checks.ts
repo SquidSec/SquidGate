@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import type { Finding } from './types';
+import { shouldBlock } from './config';
 
 export type { Finding };
 
@@ -12,39 +13,44 @@ export async function createCheckRun(
   findings: Finding[],
   summary: string,
   blockOn: string,
-  annotate: boolean
+  annotate: boolean,
+  extraSummaryNote?: string
 ): Promise<{ conclusion: string; blockingCount: number }> {
   const octokit = github.getOctokit(token);
 
-  const blockingFindings = findings.filter(f => {
-    const order: any = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
-    return (order[f.severity] || 0) >= (order[blockOn] || 0);
-  });
+  const blockingFindings = findings.filter((f) => shouldBlock(f.severity, blockOn));
   const blockingCount = blockingFindings.length;
   const conclusion = blockingCount > 0 ? 'failure' : 'success';
 
   const annotations = annotate
-    ? findings.slice(0, 50).map(f => ({
+    ? findings.slice(0, 50).map((f) => ({
         path: f.file,
-        start_line: Math.max(1, f.start_line),
-        end_line: Math.max(f.start_line, f.end_line),
-        annotation_level: (f.severity === 'critical' || f.severity === 'high' ? 'failure' : f.severity === 'medium' ? 'warning' : 'notice') as 'failure' | 'warning' | 'notice',
+        start_line: Math.max(1, f.start_line || 1),
+        end_line: Math.max(f.start_line || 1, f.end_line || f.start_line || 1),
+        annotation_level: (f.severity === 'critical' || f.severity === 'high'
+          ? 'failure'
+          : f.severity === 'medium'
+            ? 'warning'
+            : 'notice') as 'failure' | 'warning' | 'notice',
         title: f.title,
-        message: `${f.severity.toUpperCase()} [${f.confidence}] ${f.description}\n\nRecommendation: ${f.recommendation}${f.cwe ? `\nCWE: ${f.cwe}` : ''}${f.owasp ? `\nOWASP: ${f.owasp}` : ''}`,
+        message: `${f.severity.toUpperCase()} [${f.confidence}] ${f.description}\n\nRecommendation: ${f.recommendation}${f.cwe ? `\nCWE: ${f.cwe}` : ''}${f.owasp ? `\nOWASP: ${f.owasp}` : ''}${f.category ? `\nCategory: ${f.category}` : ''}`,
       }))
     : [];
 
-  const title = blockingCount > 0
-    ? `${blockingCount} blocking security finding(s)`
-    : findings.length > 0
-    ? `${findings.length} security finding(s) (below threshold)`
-    : 'No security issues found';
+  const title =
+    blockingCount > 0
+      ? `${blockingCount} blocking security finding(s)`
+      : findings.length > 0
+        ? `${findings.length} security finding(s) (below threshold)`
+        : 'No security issues found';
 
-  const checkOutput = {
-    title,
-    summary: summary + (blockingCount > 0 ? `\n\n**${blockingCount} finding(s) meet or exceed block threshold (${blockOn}).**` : ''),
-    annotations,
-  };
+  let fullSummary = summary || '';
+  if (blockingCount > 0) {
+    fullSummary += `\n\n**${blockingCount} finding(s) meet or exceed block threshold (${blockOn}).**`;
+  }
+  if (extraSummaryNote) {
+    fullSummary += `\n\n${extraSummaryNote}`;
+  }
 
   const check = await octokit.rest.checks.create({
     owner,
@@ -52,8 +58,12 @@ export async function createCheckRun(
     name: 'SquidGate',
     head_sha: headSha,
     status: 'completed',
-    conclusion: conclusion as any,
-    output: checkOutput,
+    conclusion: conclusion as 'success' | 'failure' | 'neutral' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required',
+    output: {
+      title,
+      summary: fullSummary,
+      annotations,
+    },
   });
 
   core.info(`Check run created: ${check.data.html_url}`);
@@ -84,7 +94,9 @@ export async function postPrComment(
   for (const f of shown) {
     const sev = f.severity.toUpperCase();
     body += `### ${sev} — ${f.title}\n`;
-    body += `**File:** \`${f.file}:${f.start_line}\`  |  **Confidence:** ${f.confidence}\n\n`;
+    body += `**File:** \`${f.file}:${f.start_line}\`  |  **Confidence:** ${f.confidence}`;
+    if (f.category) body += `  |  **Category:** ${f.category}`;
+    body += `\n\n`;
     body += `${f.description}\n\n`;
     if (f.cwe || f.owasp) {
       body += `CWE: ${f.cwe || 'N/A'} | OWASP: ${f.owasp || 'N/A'}\n\n`;

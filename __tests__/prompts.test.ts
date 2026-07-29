@@ -8,7 +8,7 @@ describe('prompts', () => {
     expect(inferLanguage('main.py')).toBe('Python');
     expect(inferLanguage('app.go')).toBe('Go');
     expect(inferLanguage('unknown.xyz')).toBe('Unknown');
-    expect(inferLanguage('Dockerfile')).toBe('Unknown'); // no ext
+    expect(inferLanguage('Dockerfile')).toBe('Dockerfile');
   });
 
   it('buildSystemPrompt includes strict security standards and categories', () => {
@@ -19,6 +19,8 @@ describe('prompts', () => {
     expect(prompt).toContain('secrets, injection');
     expect(prompt).toContain('NEVER include any text before or after the JSON');
     expect(prompt).toContain('ONLY a single valid JSON object');
+    expect(prompt).toContain('EXAMPLE FINDING (secret)');
+    expect(prompt).toContain('"category"');
   });
 
   it('buildUserPrompt includes policy, files and diff', () => {
@@ -32,6 +34,11 @@ describe('prompts', () => {
     expect(prompt).toContain(diff);
   });
 
+  it('buildUserPrompt notes truncation', () => {
+    const prompt = buildUserPrompt('diff', [{ filename: 'a.ts' }], DEFAULT_CONFIG, true);
+    expect(prompt).toContain('truncated');
+  });
+
   it('buildSystemPrompt lists custom rules when present', () => {
     const cfg = {
       ...DEFAULT_CONFIG,
@@ -43,5 +50,18 @@ describe('prompts', () => {
     const p = buildSystemPrompt(cfg);
     expect(p).toContain('CUSTOM RULES');
     expect(p).toContain('No eval ever');
+  });
+
+  it('buildSystemPrompt lists disabled categories', () => {
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      policy: {
+        ...DEFAULT_CONFIG.policy,
+        categories: { ...DEFAULT_CONFIG.policy.categories, xss: false },
+      },
+    };
+    const p = buildSystemPrompt(cfg);
+    expect(p).toContain('DISABLED CATEGORIES');
+    expect(p).toContain('xss');
   });
 });

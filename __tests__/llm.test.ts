@@ -1,4 +1,4 @@
-import { extractJson, normalizeResponse } from '../src/llm';
+import { extractJson, extractBalancedObject, normalizeResponse } from '../src/llm';
 
 describe('llm response parsing', () => {
   it('normalizes good response', () => {
@@ -35,11 +35,20 @@ describe('llm response parsing', () => {
     const out = extractJson('sorry, I cannot do that as an AI');
     expect(out.findings).toEqual([]);
     expect(out.summary).toMatch(/could not be parsed/);
+    expect(out.parse_error).toBeTruthy();
   });
 
   it('extracts from plain object even with surrounding text', () => {
     const text = 'Some text before {"findings": [], "summary": "clean"} and after';
     const out = extractJson(text);
     expect(out.summary).toBe('clean');
+  });
+
+  it('extractBalancedObject handles nested braces in strings', () => {
+    const text = 'prefix {"findings":[{"description":"uses {braces} ok"}],"summary":"s"} trailing';
+    const obj = extractBalancedObject(text);
+    expect(obj).not.toBeNull();
+    const parsed = JSON.parse(obj!);
+    expect(parsed.findings[0].description).toContain('{braces}');
   });
 });
