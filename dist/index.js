@@ -34821,22 +34821,24 @@ exports.createCheckRun = createCheckRun;
 exports.postPrComment = postPrComment;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-async function createCheckRun(token, owner, repo, headSha, findings, summary, blockOn, annotate) {
+const config_1 = __nccwpck_require__(5751);
+async function createCheckRun(token, owner, repo, headSha, findings, summary, blockOn, annotate, extraSummaryNote) {
     const octokit = github.getOctokit(token);
-    const blockingFindings = findings.filter(f => {
-        const order = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
-        return (order[f.severity] || 0) >= (order[blockOn] || 0);
-    });
+    const blockingFindings = findings.filter((f) => (0, config_1.shouldBlock)(f.severity, blockOn));
     const blockingCount = blockingFindings.length;
     const conclusion = blockingCount > 0 ? 'failure' : 'success';
     const annotations = annotate
-        ? findings.slice(0, 50).map(f => ({
+        ? findings.slice(0, 50).map((f) => ({
             path: f.file,
-            start_line: Math.max(1, f.start_line),
-            end_line: Math.max(f.start_line, f.end_line),
-            annotation_level: (f.severity === 'critical' || f.severity === 'high' ? 'failure' : f.severity === 'medium' ? 'warning' : 'notice'),
+            start_line: Math.max(1, f.start_line || 1),
+            end_line: Math.max(f.start_line || 1, f.end_line || f.start_line || 1),
+            annotation_level: (f.severity === 'critical' || f.severity === 'high'
+                ? 'failure'
+                : f.severity === 'medium'
+                    ? 'warning'
+                    : 'notice'),
             title: f.title,
-            message: `${f.severity.toUpperCase()} [${f.confidence}] ${f.description}\n\nRecommendation: ${f.recommendation}${f.cwe ? `\nCWE: ${f.cwe}` : ''}${f.owasp ? `\nOWASP: ${f.owasp}` : ''}`,
+            message: `${f.severity.toUpperCase()} [${f.confidence}] ${f.description}\n\nRecommendation: ${f.recommendation}${f.cwe ? `\nCWE: ${f.cwe}` : ''}${f.owasp ? `\nOWASP: ${f.owasp}` : ''}${f.category ? `\nCategory: ${f.category}` : ''}`,
         }))
         : [];
     const title = blockingCount > 0
@@ -34844,11 +34846,13 @@ async function createCheckRun(token, owner, repo, headSha, findings, summary, bl
         : findings.length > 0
             ? `${findings.length} security finding(s) (below threshold)`
             : 'No security issues found';
-    const checkOutput = {
-        title,
-        summary: summary + (blockingCount > 0 ? `\n\n**${blockingCount} finding(s) meet or exceed block threshold (${blockOn}).**` : ''),
-        annotations,
-    };
+    let fullSummary = summary || '';
+    if (blockingCount > 0) {
+        fullSummary += `\n\n**${blockingCount} finding(s) meet or exceed block threshold (${blockOn}).**`;
+    }
+    if (extraSummaryNote) {
+        fullSummary += `\n\n${extraSummaryNote}`;
+    }
     const check = await octokit.rest.checks.create({
         owner,
         repo,
@@ -34856,7 +34860,11 @@ async function createCheckRun(token, owner, repo, headSha, findings, summary, bl
         head_sha: headSha,
         status: 'completed',
         conclusion: conclusion,
-        output: checkOutput,
+        output: {
+            title,
+            summary: fullSummary,
+            annotations,
+        },
     });
     core.info(`Check run created: ${check.data.html_url}`);
     return { conclusion, blockingCount };
@@ -34873,7 +34881,10 @@ async function postPrComment(token, owner, repo, pullNumber, findings, summary, 
     for (const f of shown) {
         const sev = f.severity.toUpperCase();
         body += `### ${sev} — ${f.title}\n`;
-        body += `**File:** \`${f.file}:${f.start_line}\`  |  **Confidence:** ${f.confidence}\n\n`;
+        body += `**File:** \`${f.file}:${f.start_line}\`  |  **Confidence:** ${f.confidence}`;
+        if (f.category)
+            body += `  |  **Category:** ${f.category}`;
+        body += `\n\n`;
         body += `${f.description}\n\n`;
         if (f.cwe || f.owasp) {
             body += `CWE: ${f.cwe || 'N/A'} | OWASP: ${f.owasp || 'N/A'}\n\n`;
@@ -34933,9 +34944,11 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.SEVERITY_ORDER = exports.DEFAULT_CONFIG = void 0;
+exports.CONFIDENCE_ORDER = exports.SEVERITY_ORDER = exports.DEFAULT_CONFIG = void 0;
 exports.shouldBlock = shouldBlock;
+exports.deepMerge = deepMerge;
 exports.loadConfig = loadConfig;
+exports.inferCategory = inferCategory;
 exports.filterFindings = filterFindings;
 const fs = __importStar(__nccwpck_require__(9896));
 const yaml = __importStar(__nccwpck_require__(4281));
@@ -34985,48 +34998,62 @@ exports.SEVERITY_ORDER = {
     info: 0,
     none: -1,
 };
+exports.CONFIDENCE_ORDER = {
+    high: 2,
+    medium: 1,
+    low: 0,
+};
 function shouldBlock(severity, threshold) {
+    if (threshold === 'none')
+        return false;
     const sev = exports.SEVERITY_ORDER[severity] ?? -1;
     const thr = exports.SEVERITY_ORDER[threshold] ?? 999;
     return sev >= thr;
 }
+function isPlainObject(v) {
+    return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+/** Recursive deep merge (arrays replaced, not concatenated). */
 function deepMerge(target, source) {
+    const out = { ...target };
     for (const key of Object.keys(source)) {
-        if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
-            target[key] = deepMerge(target[key] || {}, source[key]);
+        const sv = source[key];
+        const tv = out[key];
+        if (isPlainObject(sv) && isPlainObject(tv)) {
+            out[key] = deepMerge(tv, sv);
         }
-        else {
-            target[key] = source[key];
+        else if (sv !== undefined) {
+            out[key] = sv;
         }
     }
-    return target;
+    return out;
 }
 function loadConfig(configPath, overrides = {}) {
-    let config = JSON.parse(JSON.stringify(exports.DEFAULT_CONFIG)); // deep clone
+    let config = JSON.parse(JSON.stringify(exports.DEFAULT_CONFIG));
     if (fs.existsSync(configPath)) {
         try {
             const raw = fs.readFileSync(configPath, 'utf8');
             const parsed = yaml.load(raw);
-            if (parsed) {
+            if (parsed && isPlainObject(parsed)) {
                 config = deepMerge(config, parsed);
             }
         }
         catch (e) {
-            // caller can warn
-            console.warn(`Failed to parse config at ${configPath}: ${e}`);
+            const msg = e instanceof Error ? e.message : String(e);
+            console.warn(`Failed to parse config at ${configPath}: ${msg}`);
         }
     }
-    // Apply overrides (inputs)
     if (overrides.llm) {
         config.llm = { ...config.llm, ...overrides.llm };
     }
     if (overrides.policy) {
-        config.policy = { ...config.policy, ...overrides.policy };
-        if (overrides.policy.categories) {
-            config.policy.categories = { ...config.policy.categories, ...overrides.policy.categories };
+        const { categories, custom_rules, ...rest } = overrides.policy;
+        config.policy = { ...config.policy, ...rest };
+        if (categories) {
+            config.policy.categories = { ...config.policy.categories, ...categories };
         }
-        if (overrides.policy.custom_rules) {
-            config.policy.custom_rules = overrides.policy.custom_rules;
+        if (custom_rules) {
+            config.policy.custom_rules = custom_rules;
         }
     }
     if (overrides.context) {
@@ -35037,14 +35064,281 @@ function loadConfig(configPath, overrides = {}) {
     }
     return config;
 }
+/** Map free-text / CWE hints to a policy category when the model omits `category`. */
+function inferCategory(finding) {
+    if (finding.category && typeof finding.category === 'string') {
+        return finding.category.toLowerCase().replace(/[\s-]+/g, '_');
+    }
+    const blob = [
+        finding.title,
+        finding.description,
+        finding.cwe || '',
+        finding.owasp || '',
+        finding.recommendation,
+    ]
+        .join(' ')
+        .toLowerCase();
+    const rules = [
+        [/\b(secret|api[_ ]?key|private[_ ]?key|token|password|credential|cwe-798|cwe-259)\b/, 'secrets'],
+        [/\b(hardcoded).*(password|secret|key|token)\b/, 'hardcoded_credentials'],
+        [/\b(sql\s*inject|command\s*inject|os\s*command|cwe-89|cwe-78|cwe-77|sqli)\b/, 'injection'],
+        [/\b(xss|cross-site scripting|cwe-79)\b/, 'xss'],
+        [/\b(ssrf|server-side request|cwe-918)\b/, 'ssrf'],
+        [/\b(path\s*traversal|directory\s*traversal|cwe-22)\b/, 'path_traversal'],
+        [/\b(csrf|cross-site request forgery|cwe-352)\b/, 'csrf'],
+        [/\b(deserializ|pickle|yaml\.load|cwe-502)\b/, 'insecure_deserialization'],
+        [/\b(md5|sha1|ecb|weak\s*crypto|cwe-327|cwe-328)\b/, 'cryptography'],
+        [/\b(authn|authz|authorization|authentication|idor|broken access|cwe-287|cwe-862|cwe-863)\b/, 'authn_authz'],
+        [/\b(eval\(|exec\(|child_process|dangerous function)\b/, 'dangerous_functions'],
+        [/\b(supply.?chain|dependency|typosquat|malicious package)\b/, 'supply_chain'],
+        [/\b(misconfig|debug\s*=\s*true|permissive cors)\b/, 'misconfiguration'],
+    ];
+    for (const [re, cat] of rules) {
+        if (re.test(blob))
+            return cat;
+    }
+    return null;
+}
 function filterFindings(findings, config) {
     const minConf = config.policy.min_confidence;
-    const confOrder = { high: 2, medium: 1, low: 0 };
+    const minScore = exports.CONFIDENCE_ORDER[minConf] ?? 1;
+    const categories = config.policy.categories || {};
+    // If every known category is enabled (or categories empty), only confidence filters.
+    const disabled = new Set(Object.entries(categories)
+        .filter(([, enabled]) => enabled === false)
+        .map(([k]) => k.toLowerCase()));
     return findings.filter((f) => {
-        if (!f.confidence || confOrder[f.confidence] < confOrder[minConf])
+        const conf = exports.CONFIDENCE_ORDER[f.confidence] ?? -1;
+        if (conf < minScore)
+            return false;
+        if (disabled.size === 0)
+            return true;
+        const cat = inferCategory(f);
+        if (!cat) {
+            // Unknown category: keep (do not drop on inference failure)
+            return true;
+        }
+        if (disabled.has(cat.toLowerCase()))
+            return false;
+        // Explicit false for this key
+        if (categories[cat] === false)
             return false;
         return true;
     });
+}
+
+
+/***/ }),
+
+/***/ 1510:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getPullRequestDiff = getPullRequestDiff;
+exports.getChangedFiles = getChangedFiles;
+const core = __importStar(__nccwpck_require__(7484));
+const github = __importStar(__nccwpck_require__(3228));
+const fs = __importStar(__nccwpck_require__(9896));
+const exec_1 = __nccwpck_require__(5236);
+async function captureExec(cmd, args) {
+    let stdout = '';
+    const exit = await (0, exec_1.exec)(cmd, args, {
+        listeners: {
+            stdout: (data) => {
+                stdout += data.toString();
+            },
+        },
+        silent: true,
+        ignoreReturnCode: true,
+    });
+    return { exit, stdout };
+}
+function truncateDiff(diff, maxBytes) {
+    const originalBytes = Buffer.byteLength(diff, 'utf8');
+    if (originalBytes <= maxBytes) {
+        return { diff, truncated: false, originalBytes };
+    }
+    // Prefer character cut near maxBytes (byte-aware enough for ASCII-heavy diffs)
+    const cut = diff.substring(0, maxBytes);
+    const msg = `\n... [diff truncated: ${originalBytes} bytes → ${maxBytes} byte limit; ` +
+        `raise context.max_diff_bytes if needed]\n`;
+    return { diff: cut + msg, truncated: true, originalBytes };
+}
+/**
+ * Prefer GitHub API diff (reliable for forks / shallow clones).
+ * Fall back to local git with merge-base and multiple base candidates.
+ */
+async function getPullRequestDiff(token, owner, repo, pullNumber, maxBytes, linesBefore = 30, linesAfter = 30) {
+    // API-first: works for fork PRs and does not depend on local fetch depth.
+    try {
+        const result = await getDiffViaApi(token, owner, repo, pullNumber, maxBytes);
+        if (result.diff.trim()) {
+            if (result.truncated) {
+                core.warning(`Diff truncated to ${maxBytes} bytes (original ~${result.originalBytes} bytes). ` +
+                    `Security analysis may miss findings outside the kept window.`);
+            }
+            return result;
+        }
+        core.warning('GitHub API returned empty diff; trying local git');
+    }
+    catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        core.warning(`GitHub API diff failed (${msg}); falling back to local git`);
+    }
+    if (!fs.existsSync('.git')) {
+        throw new Error('No PR diff available (API failed and no local .git)');
+    }
+    const result = await getDiffViaGit(maxBytes, linesBefore, linesAfter);
+    if (result.truncated) {
+        core.warning(`Diff truncated to ${maxBytes} bytes (original ~${result.originalBytes} bytes). ` +
+            `Security analysis may miss findings outside the kept window.`);
+    }
+    return result;
+}
+async function getDiffViaApi(token, owner, repo, pullNumber, maxBytes) {
+    const octokit = github.getOctokit(token);
+    const response = await octokit.rest.pulls.get({
+        owner,
+        repo,
+        pull_number: pullNumber,
+        mediaType: { format: 'diff' },
+    });
+    const raw = String(response.data);
+    const { diff, truncated, originalBytes } = truncateDiff(raw, maxBytes);
+    return { diff, truncated, source: 'api', originalBytes };
+}
+async function getDiffViaGit(maxBytes, linesBefore, linesAfter) {
+    const baseRef = process.env.GITHUB_BASE_REF;
+    const headSha = process.env.GITHUB_SHA || 'HEAD';
+    // git --unified is symmetric; honor the larger of before/after.
+    const contextLines = Math.max(1, linesBefore || 0, linesAfter || 0);
+    if (baseRef) {
+        try {
+            await (0, exec_1.exec)('git', ['fetch', 'origin', baseRef, '--depth=100'], { silent: true, ignoreReturnCode: true });
+        }
+        catch {
+            /* best effort */
+        }
+        // Also try fetching the PR merge base refs GitHub Actions often provides
+        try {
+            await (0, exec_1.exec)('git', ['fetch', 'origin', `pull/${process.env.GITHUB_REF_NAME || ''}`, '--depth=100'], {
+                silent: true,
+                ignoreReturnCode: true,
+            });
+        }
+        catch {
+            /* best effort */
+        }
+    }
+    const candidates = [];
+    if (baseRef) {
+        candidates.push(`origin/${baseRef}`);
+        candidates.push(baseRef);
+    }
+    // merge-base against origin/base when available
+    if (baseRef) {
+        const mb = await captureExec('git', ['merge-base', `origin/${baseRef}`, headSha]);
+        if (mb.exit === 0 && mb.stdout.trim()) {
+            candidates.unshift(mb.stdout.trim());
+        }
+    }
+    candidates.push('HEAD^');
+    let lastError = 'no candidates produced diff';
+    for (const base of candidates) {
+        // Three-dot: changes on head since merge-base with base
+        for (const range of [`${base}...${headSha}`, `${base}..${headSha}`]) {
+            const { exit, stdout } = await captureExec('git', ['diff', `--unified=${contextLines}`, range]);
+            if ((exit === 0 || stdout.trim()) && stdout.trim()) {
+                const { diff, truncated, originalBytes } = truncateDiff(stdout, maxBytes);
+                return { diff, truncated, source: 'git', originalBytes };
+            }
+            lastError = `git diff ${range} exit=${exit}`;
+        }
+    }
+    // Last resort: single commit
+    const fallback = await captureExec('git', ['diff', `--unified=${contextLines}`, 'HEAD^..HEAD']);
+    if (fallback.stdout.trim()) {
+        const { diff, truncated, originalBytes } = truncateDiff(fallback.stdout, maxBytes);
+        return { diff, truncated, source: 'git', originalBytes };
+    }
+    throw new Error(`git diff produced no output (${lastError})`);
+}
+async function getChangedFiles(token, owner, repo, pullNumber, maxFiles) {
+    try {
+        const octokit = github.getOctokit(token);
+        const { data: files } = await octokit.rest.pulls.listFiles({
+            owner,
+            repo,
+            pull_number: pullNumber,
+            per_page: Math.min(maxFiles, 100),
+        });
+        return files.slice(0, maxFiles).map((f) => ({
+            filename: f.filename,
+            status: f.status,
+            additions: f.additions,
+            deletions: f.deletions,
+            patch: f.patch,
+        }));
+    }
+    catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        core.warning(`listFiles via API failed (${msg}), falling back to git`);
+        return getChangedFilesViaGit(maxFiles);
+    }
+}
+async function getChangedFilesViaGit(maxFiles) {
+    const baseRef = process.env.GITHUB_BASE_REF;
+    const headSha = process.env.GITHUB_SHA || 'HEAD';
+    const ranges = baseRef
+        ? [`origin/${baseRef}...${headSha}`, 'HEAD^..HEAD']
+        : ['HEAD^..HEAD'];
+    for (const range of ranges) {
+        const { stdout } = await captureExec('git', ['diff', '--name-status', range]);
+        const lines = stdout.trim().split('\n').filter(Boolean).slice(0, maxFiles);
+        if (lines.length === 0)
+            continue;
+        return lines.map((line) => {
+            const [status, ...rest] = line.split('\t');
+            const file = rest.join('\t');
+            return { filename: file, status: status || 'M', additions: 0, deletions: 0 };
+        });
+    }
+    return [];
 }
 
 
@@ -35089,100 +35383,14 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.postPrComment = exports.createCheckRun = exports.normalizeResponse = exports.extractJson = exports.callLlm = exports.buildUserPrompt = exports.buildSystemPrompt = exports.inferLanguage = exports.shouldBlock = exports.filterFindings = exports.loadConfig = void 0;
+exports.getChangedFiles = exports.getPullRequestDiff = exports.postPrComment = exports.createCheckRun = exports.normalizeResponse = exports.extractBalancedObject = exports.extractJson = exports.callLlm = exports.buildUserPrompt = exports.buildSystemPrompt = exports.inferLanguage = exports.deepMerge = exports.inferCategory = exports.shouldBlock = exports.filterFindings = exports.loadConfig = void 0;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const fs = __importStar(__nccwpck_require__(9896));
-const exec_1 = __nccwpck_require__(5236);
 const config_1 = __nccwpck_require__(5751);
 const prompts_1 = __nccwpck_require__(774);
 const llm_1 = __nccwpck_require__(9954);
 const checks_1 = __nccwpck_require__(44);
-async function getPullRequestDiff(token, owner, repo, pullNumber, maxBytes, contextLines = 30) {
-    if (fs.existsSync('.git')) {
-        try {
-            return await getDiffViaGit(maxBytes, contextLines);
-        }
-        catch (e) {
-            core.warning(`Local git diff failed (${e.message}), falling back to GitHub API`);
-        }
-    }
-    const octokit = github.getOctokit(token);
-    try {
-        const response = await octokit.rest.pulls.get({
-            owner,
-            repo,
-            pull_number: pullNumber,
-            mediaType: { format: 'diff' },
-        });
-        let diff = String(response.data);
-        if (diff.length > maxBytes) {
-            diff = diff.substring(0, maxBytes) + '\n... [diff truncated]';
-            core.warning(`Diff truncated to ${maxBytes} bytes`);
-        }
-        return diff;
-    }
-    catch (error) {
-        core.warning(`Failed to fetch diff via GitHub API: ${error.message}`);
-        throw error;
-    }
-}
-async function getDiffViaGit(maxBytes, contextLines = 30) {
-    const baseRef = process.env.GITHUB_BASE_REF;
-    const headSha = process.env.GITHUB_SHA || 'HEAD';
-    let base = 'HEAD^';
-    if (baseRef) {
-        base = `origin/${baseRef}`;
-        try {
-            await (0, exec_1.exec)('git', ['fetch', 'origin', baseRef, '--depth=100'], { silent: true });
-        }
-        catch { }
-    }
-    let diff = '';
-    const options = {
-        listeners: { stdout: (data) => { diff += data.toString(); } },
-        silent: true,
-        ignoreReturnCode: true,
-    };
-    let exit = await (0, exec_1.exec)('git', ['diff', `--unified=${contextLines}`, `${base}...${headSha}`], options);
-    if (exit !== 0 && !diff) {
-        await (0, exec_1.exec)('git', ['diff', `--unified=${contextLines}`, 'HEAD^..HEAD'], options);
-    }
-    if (diff.length > maxBytes) {
-        diff = diff.substring(0, maxBytes) + '\n... [diff truncated]';
-    }
-    if (!diff.trim()) {
-        throw new Error('git diff produced no output');
-    }
-    return diff;
-}
-async function getChangedFiles(token, owner, repo, pullNumber, maxFiles) {
-    try {
-        const octokit = github.getOctokit(token);
-        const { data: files } = await octokit.rest.pulls.listFiles({
-            owner,
-            repo,
-            pull_number: pullNumber,
-            per_page: maxFiles,
-        });
-        return files.slice(0, maxFiles);
-    }
-    catch (e) {
-        core.warning('listFiles via API failed, falling back to git');
-        return await getChangedFilesViaGit(maxFiles);
-    }
-}
-async function getChangedFilesViaGit(maxFiles) {
-    let out = '';
-    const opts = { listeners: { stdout: (d) => { out += d.toString(); } }, silent: true, ignoreReturnCode: true };
-    await (0, exec_1.exec)('git', ['diff', '--name-status', 'HEAD^..HEAD'], opts);
-    const lines = out.trim().split('\n').filter(Boolean).slice(0, maxFiles);
-    return lines.map(line => {
-        const [status, ...rest] = line.split('\t');
-        const file = rest.join('\t');
-        return { filename: file, status: status || 'M', additions: 0, deletions: 0 };
-    });
-}
+const diff_1 = __nccwpck_require__(1510);
 async function run() {
     try {
         const token = core.getInput('github-token', { required: true });
@@ -35213,33 +35421,55 @@ async function run() {
         }
         const config = (0, config_1.loadConfig)(configPath, overrides);
         core.info(`Using provider=${config.llm.provider} model=${config.llm.model} block_on=${config.policy.block_on}`);
-        const diff = await getPullRequestDiff(token, owner, repo, pullNumber, config.context.max_diff_bytes, config.context.lines_before);
-        const changedFiles = await getChangedFiles(token, owner, repo, pullNumber, config.context.max_files);
-        core.info(`Diff size: ${diff.length} bytes, ${changedFiles.length} files`);
+        const diffResult = await (0, diff_1.getPullRequestDiff)(token, owner, repo, pullNumber, config.context.max_diff_bytes, config.context.lines_before, config.context.lines_after);
+        const changedFiles = await (0, diff_1.getChangedFiles)(token, owner, repo, pullNumber, config.context.max_files);
+        core.info(`Diff source=${diffResult.source} size=${diffResult.diff.length} bytes` +
+            (diffResult.truncated ? ` (truncated from ${diffResult.originalBytes})` : '') +
+            `, ${changedFiles.length} files`);
         const systemPrompt = (0, prompts_1.buildSystemPrompt)(config);
-        const userPrompt = (0, prompts_1.buildUserPrompt)(diff, changedFiles, config);
+        const userPrompt = (0, prompts_1.buildUserPrompt)(diffResult.diff, changedFiles, config, diffResult.truncated);
         core.info('Calling LLM for security analysis...');
         let llmResponse;
         try {
             llmResponse = await (0, llm_1.callLlm)(config.llm.provider, config.llm.model, apiKey, systemPrompt, userPrompt, baseUrl);
         }
         catch (llmErr) {
-            core.error(`LLM call failed: ${llmErr.message}`);
+            const msg = llmErr instanceof Error ? llmErr.message : String(llmErr);
+            core.error(`LLM call failed: ${msg}`);
             if (config.output.fail_on_error) {
                 try {
-                    await (0, checks_1.createCheckRun)(token, owner, repo, headSha, [], `LLM call failed: ${llmErr.message}`, 'high', false);
+                    await (0, checks_1.createCheckRun)(token, owner, repo, headSha, [], `LLM call failed: ${msg}`, config.policy.block_on, false, 'Check failed because the LLM provider call errored (fail_on_error: true).');
                 }
-                catch { }
-                core.setFailed(`LLM call failed: ${llmErr.message}`);
+                catch {
+                    /* ignore check create failure */
+                }
+                core.setFailed(`LLM call failed: ${msg}`);
             }
             else {
-                core.warning('fail_on_error is false, marking neutral.');
+                core.warning('fail_on_error is false, marking neutral / continuing without findings.');
+                try {
+                    await (0, checks_1.createCheckRun)(token, owner, repo, headSha, [], `LLM call failed (non-blocking): ${msg}`, 'none', false, 'fail_on_error is false — check concluded success with no findings.');
+                }
+                catch {
+                    /* ignore */
+                }
             }
             return;
         }
+        if (llmResponse.parse_error) {
+            core.warning(`LLM JSON parse issue: ${llmResponse.parse_error}`);
+        }
         const filtered = (0, config_1.filterFindings)(llmResponse.findings, config);
         core.info(`LLM returned ${llmResponse.findings.length} findings, ${filtered.length} after filtering`);
-        const { conclusion, blockingCount } = await (0, checks_1.createCheckRun)(token, owner, repo, headSha, filtered, llmResponse.summary, config.policy.block_on, config.output.annotate_lines);
+        const extraNotes = [];
+        if (diffResult.truncated) {
+            extraNotes.push(`⚠️ Diff was truncated (${diffResult.originalBytes} → ${config.context.max_diff_bytes} bytes). ` +
+                `Findings may be incomplete.`);
+        }
+        if (llmResponse.parse_error) {
+            extraNotes.push(`⚠️ LLM response parse issue: ${llmResponse.parse_error}`);
+        }
+        const { conclusion, blockingCount } = await (0, checks_1.createCheckRun)(token, owner, repo, headSha, filtered, llmResponse.summary, config.policy.block_on, config.output.annotate_lines, extraNotes.length ? extraNotes.join('\n') : undefined);
         if (config.output.comment_on_pr) {
             await (0, checks_1.postPrComment)(token, owner, repo, pullNumber, filtered, llmResponse.summary, blockingCount);
         }
@@ -35254,7 +35484,8 @@ async function run() {
         }
     }
     catch (error) {
-        core.setFailed(error.message);
+        const msg = error instanceof Error ? error.message : String(error);
+        core.setFailed(msg);
     }
 }
 run();
@@ -35262,6 +35493,8 @@ var config_2 = __nccwpck_require__(5751);
 Object.defineProperty(exports, "loadConfig", ({ enumerable: true, get: function () { return config_2.loadConfig; } }));
 Object.defineProperty(exports, "filterFindings", ({ enumerable: true, get: function () { return config_2.filterFindings; } }));
 Object.defineProperty(exports, "shouldBlock", ({ enumerable: true, get: function () { return config_2.shouldBlock; } }));
+Object.defineProperty(exports, "inferCategory", ({ enumerable: true, get: function () { return config_2.inferCategory; } }));
+Object.defineProperty(exports, "deepMerge", ({ enumerable: true, get: function () { return config_2.deepMerge; } }));
 var prompts_2 = __nccwpck_require__(774);
 Object.defineProperty(exports, "inferLanguage", ({ enumerable: true, get: function () { return prompts_2.inferLanguage; } }));
 Object.defineProperty(exports, "buildSystemPrompt", ({ enumerable: true, get: function () { return prompts_2.buildSystemPrompt; } }));
@@ -35269,10 +35502,14 @@ Object.defineProperty(exports, "buildUserPrompt", ({ enumerable: true, get: func
 var llm_2 = __nccwpck_require__(9954);
 Object.defineProperty(exports, "callLlm", ({ enumerable: true, get: function () { return llm_2.callLlm; } }));
 Object.defineProperty(exports, "extractJson", ({ enumerable: true, get: function () { return llm_2.extractJson; } }));
+Object.defineProperty(exports, "extractBalancedObject", ({ enumerable: true, get: function () { return llm_2.extractBalancedObject; } }));
 Object.defineProperty(exports, "normalizeResponse", ({ enumerable: true, get: function () { return llm_2.normalizeResponse; } }));
 var checks_2 = __nccwpck_require__(44);
 Object.defineProperty(exports, "createCheckRun", ({ enumerable: true, get: function () { return checks_2.createCheckRun; } }));
 Object.defineProperty(exports, "postPrComment", ({ enumerable: true, get: function () { return checks_2.postPrComment; } }));
+var diff_2 = __nccwpck_require__(1510);
+Object.defineProperty(exports, "getPullRequestDiff", ({ enumerable: true, get: function () { return diff_2.getPullRequestDiff; } }));
+Object.defineProperty(exports, "getChangedFiles", ({ enumerable: true, get: function () { return diff_2.getChangedFiles; } }));
 
 
 /***/ }),
@@ -35318,48 +35555,140 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.normalizeResponse = normalizeResponse;
 exports.extractJson = extractJson;
+exports.extractBalancedObject = extractBalancedObject;
 exports.callLlm = callLlm;
 const core = __importStar(__nccwpck_require__(7484));
-function normalizeResponse(resp) {
-    if (!resp)
-        resp = {};
-    if (!Array.isArray(resp.findings))
-        resp.findings = [];
-    if (typeof resp.summary !== 'string')
-        resp.summary = '';
-    return resp;
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+const MAX_ATTEMPTS = 3;
+const BASE_DELAY_MS = 800;
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
+function normalizeResponse(resp) {
+    const r = (resp && typeof resp === 'object' ? resp : {});
+    const findings = Array.isArray(r.findings) ? r.findings : [];
+    const summary = typeof r.summary === 'string' ? r.summary : '';
+    return { findings, summary };
+}
+/**
+ * Extract the first balanced JSON object from text (handles nested braces).
+ * Falls back to code-fence contents, then empty findings with parse_error.
+ */
 function extractJson(text) {
-    if (!text)
-        return { findings: [], summary: 'LLM response could not be parsed.' };
-    // Try to find the largest JSON object
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-        try {
-            const parsed = JSON.parse(jsonMatch[0]);
-            return normalizeResponse(parsed);
-        }
-        catch (e) {
-            // fallthrough
-        }
+    if (!text || !text.trim()) {
+        return {
+            findings: [],
+            summary: 'LLM response could not be parsed.',
+            parse_error: 'empty response',
+            raw: text || '',
+        };
     }
-    // Try code fence
-    const fence = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    // Prefer fenced JSON first (common for Anthropic/Google)
+    const fence = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
     if (fence) {
         try {
-            const parsed = JSON.parse(fence[1]);
-            return normalizeResponse(parsed);
+            return normalizeResponse(JSON.parse(fence[1]));
         }
-        catch { }
+        catch {
+            /* try balanced object next */
+        }
+    }
+    const sliced = extractBalancedObject(text);
+    if (sliced) {
+        try {
+            return normalizeResponse(JSON.parse(sliced));
+        }
+        catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            core.warning(`JSON object found but failed to parse: ${msg}`);
+        }
+    }
+    // Last try: whole string
+    try {
+        return normalizeResponse(JSON.parse(text.trim()));
+    }
+    catch {
+        /* fallthrough */
     }
     core.warning('Could not parse LLM response as JSON. Returning empty findings.');
-    return { findings: [], summary: 'LLM response could not be parsed.' };
+    return {
+        findings: [],
+        summary: 'LLM response could not be parsed.',
+        parse_error: 'no valid JSON object in model output',
+        raw: text.length > 2000 ? text.slice(0, 2000) + '…' : text,
+    };
+}
+/** Find first top-level `{ ... }` with string/escape awareness. */
+function extractBalancedObject(text) {
+    const start = text.indexOf('{');
+    if (start < 0)
+        return null;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = start; i < text.length; i++) {
+        const ch = text[i];
+        if (inString) {
+            if (escape) {
+                escape = false;
+            }
+            else if (ch === '\\') {
+                escape = true;
+            }
+            else if (ch === '"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (ch === '"') {
+            inString = true;
+            continue;
+        }
+        if (ch === '{')
+            depth++;
+        else if (ch === '}') {
+            depth--;
+            if (depth === 0) {
+                return text.slice(start, i + 1);
+            }
+        }
+    }
+    return null;
+}
+async function fetchWithRetry(url, init, label) {
+    let lastErr;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+            const res = await fetch(url, init);
+            if (res.ok)
+                return res;
+            const errText = await res.text();
+            const retryable = RETRYABLE_STATUS.has(res.status);
+            lastErr = new Error(`${label} error (${res.status}): ${errText}`);
+            if (!retryable || attempt === MAX_ATTEMPTS)
+                throw lastErr;
+            const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 200);
+            core.warning(`${label} ${res.status}; retry ${attempt}/${MAX_ATTEMPTS} in ${delay}ms`);
+            await sleep(delay);
+        }
+        catch (e) {
+            if (e instanceof Error && e.message.includes(' error ('))
+                throw e;
+            lastErr = e instanceof Error ? e : new Error(String(e));
+            if (attempt === MAX_ATTEMPTS)
+                throw lastErr;
+            const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+            core.warning(`${label} network error; retry ${attempt}/${MAX_ATTEMPTS} in ${delay}ms: ${lastErr.message}`);
+            await sleep(delay);
+        }
+    }
+    throw lastErr || new Error(`${label} failed`);
 }
 async function callOpenAICompatible(provider, model, apiKey, systemPrompt, userPrompt, baseUrl) {
     const url = provider === 'azure'
         ? `${baseUrl || process.env.AZURE_OPENAI_ENDPOINT}/openai/deployments/${model}/chat/completions?api-version=2024-02-15-preview`
         : provider === 'custom'
-            ? `${baseUrl || 'http://localhost:11434/v1'}/chat/completions`
+            ? `${(baseUrl || 'http://localhost:11434/v1').replace(/\/$/, '')}/chat/completions`
             : 'https://api.openai.com/v1/chat/completions';
     const headers = {
         'Content-Type': 'application/json',
@@ -35380,28 +35709,22 @@ async function callOpenAICompatible(provider, model, apiKey, systemPrompt, userP
         response_format: { type: 'json_object' },
         max_tokens: 4000,
     };
-    const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`LLM API error (${res.status}): ${errText}`);
-    }
-    const data = await res.json();
+    const res = await fetchWithRetry(url, { method: 'POST', headers, body: JSON.stringify(body) }, 'LLM API');
+    const data = (await res.json());
     const content = data.choices?.[0]?.message?.content || '{}';
     try {
-        const parsed = JSON.parse(content);
-        return normalizeResponse(parsed);
+        return normalizeResponse(JSON.parse(content));
     }
     catch {
         return extractJson(content);
     }
 }
-async function callAnthropic(model, apiKey, systemPrompt, userPrompt) {
+async function callAnthropic(model, apiKey, systemPrompt, userPrompt, retryJsonOnly = false) {
     const url = 'https://api.anthropic.com/v1/messages';
-    const res = await fetch(url, {
+    const userContent = retryJsonOnly
+        ? `${userPrompt}\n\nIMPORTANT: Your previous reply was not valid JSON. Reply with ONLY the JSON object, no markdown fences, no prose.`
+        : userPrompt;
+    const res = await fetchWithRetry(url, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -35413,45 +35736,52 @@ async function callAnthropic(model, apiKey, systemPrompt, userPrompt) {
             max_tokens: 4000,
             temperature: 0,
             system: systemPrompt,
-            messages: [{ role: 'user', content: userPrompt }],
+            messages: [{ role: 'user', content: userContent }],
         }),
-    });
-    if (!res.ok) {
-        throw new Error(`Anthropic error: ${await res.text()}`);
-    }
-    const data = await res.json();
+    }, 'Anthropic');
+    const data = (await res.json());
     const text = data.content?.find((c) => c.type === 'text')?.text || '{}';
-    return extractJson(text);
+    const parsed = extractJson(text);
+    if (parsed.parse_error && !retryJsonOnly) {
+        core.warning('Anthropic JSON parse failed; retrying with stricter instruction');
+        return callAnthropic(model, apiKey, systemPrompt, userPrompt, true);
+    }
+    return parsed;
 }
-async function callGoogle(model, apiKey, systemPrompt, userPrompt) {
+async function callGoogle(model, apiKey, systemPrompt, userPrompt, retryJsonOnly = false) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-    const res = await fetch(url, {
+    const textIn = retryJsonOnly
+        ? `${systemPrompt}\n\n${userPrompt}\n\nIMPORTANT: Previous reply was not valid JSON. Return ONLY the JSON object.`
+        : `${systemPrompt}\n\n${userPrompt}`;
+    const res = await fetchWithRetry(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            contents: [{ parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
+            contents: [{ parts: [{ text: textIn }] }],
             generationConfig: {
                 temperature: 0,
                 responseMimeType: 'application/json',
             },
         }),
-    });
-    if (!res.ok) {
-        throw new Error(`Google error: ${await res.text()}`);
-    }
-    const data = await res.json();
+    }, 'Google');
+    const data = (await res.json());
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-    return extractJson(text);
+    const parsed = extractJson(text);
+    if (parsed.parse_error && !retryJsonOnly) {
+        core.warning('Google JSON parse failed; retrying with stricter instruction');
+        return callGoogle(model, apiKey, systemPrompt, userPrompt, true);
+    }
+    return parsed;
 }
 async function callLlm(provider, model, apiKey, systemPrompt, userPrompt, baseUrl) {
     if (provider === 'openai' || provider === 'azure' || provider === 'custom') {
-        return await callOpenAICompatible(provider, model, apiKey, systemPrompt, userPrompt, baseUrl);
+        return callOpenAICompatible(provider, model, apiKey, systemPrompt, userPrompt, baseUrl);
     }
-    else if (provider === 'anthropic') {
-        return await callAnthropic(model, apiKey, systemPrompt, userPrompt);
+    if (provider === 'anthropic') {
+        return callAnthropic(model, apiKey, systemPrompt, userPrompt);
     }
-    else if (provider === 'google') {
-        return await callGoogle(model, apiKey, systemPrompt, userPrompt);
+    if (provider === 'google') {
+        return callGoogle(model, apiKey, systemPrompt, userPrompt);
     }
     throw new Error(`Unsupported LLM provider: ${provider}`);
 }
@@ -35503,6 +35833,9 @@ exports.buildSystemPrompt = buildSystemPrompt;
 exports.buildUserPrompt = buildUserPrompt;
 const path = __importStar(__nccwpck_require__(6928));
 function inferLanguage(filename) {
+    const base = path.basename(filename).toLowerCase();
+    if (base === 'dockerfile' || base.startsWith('dockerfile.'))
+        return 'Dockerfile';
     const ext = path.extname(filename).toLowerCase();
     const map = {
         '.js': 'JavaScript',
@@ -35533,14 +35866,52 @@ function inferLanguage(filename) {
     };
     return map[ext] || 'Unknown';
 }
+const FEW_SHOT = `
+EXAMPLE FINDING (secret):
+{
+  "file": "src/config.py",
+  "start_line": 12,
+  "end_line": 12,
+  "severity": "critical",
+  "title": "Hardcoded API key",
+  "description": "A live-looking API key is embedded in source on a changed line.",
+  "cwe": "CWE-798",
+  "owasp": "A07:2021",
+  "recommendation": "Load secrets from environment or a secret manager; rotate the exposed key.",
+  "confidence": "high",
+  "category": "secrets"
+}
+
+EXAMPLE FINDING (injection):
+{
+  "file": "api/users.py",
+  "start_line": 40,
+  "end_line": 42,
+  "severity": "high",
+  "title": "SQL injection via string concatenation",
+  "description": "User input is concatenated into a SQL query without parameterization.",
+  "cwe": "CWE-89",
+  "owasp": "A03:2021",
+  "recommendation": "Use parameterized queries or an ORM binder; never interpolate untrusted input into SQL.",
+  "confidence": "high",
+  "category": "injection"
+}
+`.trim();
 function buildSystemPrompt(config) {
     const enabledCategories = Object.entries(config.policy.categories)
         .filter(([, v]) => v)
         .map(([k]) => k)
         .join(', ');
+    const disabledCategories = Object.entries(config.policy.categories)
+        .filter(([, v]) => !v)
+        .map(([k]) => k);
     const custom = config.policy.custom_rules.length > 0
-        ? 'CUSTOM RULES (must also enforce):\n' + config.policy.custom_rules.map((r) => '- ' + r).join('\n')
+        ? 'CUSTOM RULES (must also enforce):\n' +
+            config.policy.custom_rules.map((r) => '- ' + r).join('\n')
         : '';
+    const disabledNote = disabledCategories.length > 0
+        ? `DISABLED CATEGORIES (do NOT report findings in these categories): ${disabledCategories.join(', ')}`
+        : 'All listed categories are enabled.';
     return `You are an expert application security code reviewer with deep knowledge of secure coding practices.
 
 Your task is to analyze the provided pull request diff STRICTLY for security issues.
@@ -35553,6 +35924,7 @@ SECURITY STANDARDS TO ENFORCE (be conservative - prefer reporting over missing i
 - Modern cryptography standards (no MD5/SHA1 for security, no ECB, no hardcoded keys/IVs)
 
 DEFAULT ENABLED RULE CATEGORIES: ${enabledCategories}
+${disabledNote}
 
 ${custom}
 
@@ -35564,6 +35936,10 @@ STRICT RULES FOR ANALYSIS:
 5. Map to CWE and OWASP where applicable. Use null if none fit.
 6. Provide actionable recommendation with code suggestion when possible.
 7. Assign confidence: high (clear vulnerability), medium, low (possible issue).
+8. Set "category" to one of the enabled category keys (e.g. secrets, injection, xss).
+9. Do not invent findings outside the enabled categories.
+
+${FEW_SHOT}
 
 OUTPUT REQUIREMENTS:
 - Respond with ONLY a single valid JSON object. No markdown, no explanations outside the JSON.
@@ -35580,7 +35956,8 @@ OUTPUT REQUIREMENTS:
       "cwe": "CWE-XXX or null",
       "owasp": "A01:2021 or null",
       "recommendation": "how to fix it, preferably with example",
-      "confidence": "high|medium|low"
+      "confidence": "high|medium|low",
+      "category": "secrets|injection|authn_authz|cryptography|insecure_deserialization|path_traversal|ssrf|xss|csrf|supply_chain|hardcoded_credentials|dangerous_functions|misconfiguration"
     }
   ],
   "summary": "1-2 sentence overall assessment"
@@ -35590,9 +35967,9 @@ If no security issues are found, return: {"findings": [], "summary": "No securit
 
 NEVER include any text before or after the JSON.`;
 }
-function buildUserPrompt(diff, files, config) {
+function buildUserPrompt(diff, files, config, truncated = false) {
     const fileList = files
-        .map(f => {
+        .map((f) => {
         const lang = inferLanguage(f.filename);
         return `- ${f.filename} (${lang})`;
     })
@@ -35600,6 +35977,9 @@ function buildUserPrompt(diff, files, config) {
     const policySummary = `block_on: ${config.policy.block_on}
 min_confidence: ${config.policy.min_confidence}
 categories: ${JSON.stringify(config.policy.categories)}`;
+    const truncNote = truncated
+        ? '\n\nNOTE: The unified diff was truncated due to size limits. Only analyze what is present; do not assume missing hunks are safe or unsafe.\n'
+        : '';
     return `## Pull Request Changes
 
 Files changed:
@@ -35607,7 +35987,7 @@ ${fileList}
 
 ## Policy
 ${policySummary}
-
+${truncNote}
 ## Unified Diff (with context)
 \`\`\`diff
 ${diff}

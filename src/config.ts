@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as yaml from 'js-yaml';
-import type { SecurityScanConfig } from './types';
+import type { Finding, FindingCategory, SecurityScanConfig } from './types';
 
 export type { SecurityScanConfig } from './types';
 
@@ -64,50 +64,71 @@ export const SEVERITY_ORDER: Record<string, number> = {
   none: -1,
 };
 
+export const CONFIDENCE_ORDER: Record<string, number> = {
+  high: 2,
+  medium: 1,
+  low: 0,
+};
+
 export function shouldBlock(severity: string, threshold: string): boolean {
+  if (threshold === 'none') return false;
   const sev = SEVERITY_ORDER[severity] ?? -1;
   const thr = SEVERITY_ORDER[threshold] ?? 999;
   return sev >= thr;
 }
 
-function deepMerge(target: any, source: any): any {
-  for (const key of Object.keys(source)) {
-    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
-      target[key] = deepMerge(target[key] || {}, source[key]);
-    } else {
-      target[key] = source[key];
-    }
-  }
-  return target;
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-export function loadConfig(configPath: string, overrides: Partial<SecurityScanConfig> = {}): SecurityScanConfig {
-  let config = JSON.parse(JSON.stringify(DEFAULT_CONFIG)); // deep clone
+/** Recursive deep merge (arrays replaced, not concatenated). */
+export function deepMerge<T extends Record<string, unknown>>(target: T, source: Record<string, unknown>): T {
+  const out: Record<string, unknown> = { ...target };
+  for (const key of Object.keys(source)) {
+    const sv = source[key];
+    const tv = out[key];
+    if (isPlainObject(sv) && isPlainObject(tv)) {
+      out[key] = deepMerge(tv, sv);
+    } else if (sv !== undefined) {
+      out[key] = sv;
+    }
+  }
+  return out as T;
+}
+
+export function loadConfig(
+  configPath: string,
+  overrides: Partial<SecurityScanConfig> = {}
+): SecurityScanConfig {
+  let config = JSON.parse(JSON.stringify(DEFAULT_CONFIG)) as SecurityScanConfig;
 
   if (fs.existsSync(configPath)) {
     try {
       const raw = fs.readFileSync(configPath, 'utf8');
-      const parsed = yaml.load(raw) as Partial<SecurityScanConfig>;
-      if (parsed) {
-        config = deepMerge(config, parsed);
+      const parsed = yaml.load(raw) as Partial<SecurityScanConfig> | null;
+      if (parsed && isPlainObject(parsed)) {
+        config = deepMerge(
+          config as unknown as Record<string, unknown>,
+          parsed as Record<string, unknown>
+        ) as unknown as SecurityScanConfig;
       }
-    } catch (e) {
-      // caller can warn
-      console.warn(`Failed to parse config at ${configPath}: ${e}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn(`Failed to parse config at ${configPath}: ${msg}`);
     }
   }
 
-  // Apply overrides (inputs)
   if (overrides.llm) {
     config.llm = { ...config.llm, ...overrides.llm };
   }
   if (overrides.policy) {
-    config.policy = { ...config.policy, ...overrides.policy };
-    if (overrides.policy.categories) {
-      config.policy.categories = { ...config.policy.categories, ...overrides.policy.categories };
+    const { categories, custom_rules, ...rest } = overrides.policy;
+    config.policy = { ...config.policy, ...rest };
+    if (categories) {
+      config.policy.categories = { ...config.policy.categories, ...categories };
     }
-    if (overrides.policy.custom_rules) {
-      config.policy.custom_rules = overrides.policy.custom_rules;
+    if (custom_rules) {
+      config.policy.custom_rules = custom_rules;
     }
   }
   if (overrides.context) {
@@ -117,15 +138,73 @@ export function loadConfig(configPath: string, overrides: Partial<SecurityScanCo
     config.output = { ...config.output, ...overrides.output };
   }
 
-  return config as SecurityScanConfig;
+  return config;
 }
 
-export function filterFindings(findings: any[], config: SecurityScanConfig): any[] {
-  const minConf = config.policy.min_confidence;
-  const confOrder: Record<string, number> = { high: 2, medium: 1, low: 0 };
+/** Map free-text / CWE hints to a policy category when the model omits `category`. */
+export function inferCategory(finding: Finding): FindingCategory | null {
+  if (finding.category && typeof finding.category === 'string') {
+    return finding.category.toLowerCase().replace(/[\s-]+/g, '_');
+  }
 
-  return findings.filter((f: any) => {
-    if (!f.confidence || confOrder[f.confidence] < confOrder[minConf]) return false;
+  const blob = [
+    finding.title,
+    finding.description,
+    finding.cwe || '',
+    finding.owasp || '',
+    finding.recommendation,
+  ]
+    .join(' ')
+    .toLowerCase();
+
+  const rules: Array<[RegExp, FindingCategory]> = [
+    [/\b(secret|api[_ ]?key|private[_ ]?key|token|password|credential|cwe-798|cwe-259)\b/, 'secrets'],
+    [/\b(hardcoded).*(password|secret|key|token)\b/, 'hardcoded_credentials'],
+    [/\b(sql\s*inject|command\s*inject|os\s*command|cwe-89|cwe-78|cwe-77|sqli)\b/, 'injection'],
+    [/\b(xss|cross-site scripting|cwe-79)\b/, 'xss'],
+    [/\b(ssrf|server-side request|cwe-918)\b/, 'ssrf'],
+    [/\b(path\s*traversal|directory\s*traversal|cwe-22)\b/, 'path_traversal'],
+    [/\b(csrf|cross-site request forgery|cwe-352)\b/, 'csrf'],
+    [/\b(deserializ|pickle|yaml\.load|cwe-502)\b/, 'insecure_deserialization'],
+    [/\b(md5|sha1|ecb|weak\s*crypto|cwe-327|cwe-328)\b/, 'cryptography'],
+    [/\b(authn|authz|authorization|authentication|idor|broken access|cwe-287|cwe-862|cwe-863)\b/, 'authn_authz'],
+    [/\b(eval\(|exec\(|child_process|dangerous function)\b/, 'dangerous_functions'],
+    [/\b(supply.?chain|dependency|typosquat|malicious package)\b/, 'supply_chain'],
+    [/\b(misconfig|debug\s*=\s*true|permissive cors)\b/, 'misconfiguration'],
+  ];
+
+  for (const [re, cat] of rules) {
+    if (re.test(blob)) return cat;
+  }
+  return null;
+}
+
+export function filterFindings(findings: Finding[], config: SecurityScanConfig): Finding[] {
+  const minConf = config.policy.min_confidence;
+  const minScore = CONFIDENCE_ORDER[minConf] ?? 1;
+  const categories = config.policy.categories || {};
+
+  // If every known category is enabled (or categories empty), only confidence filters.
+  const disabled = new Set(
+    Object.entries(categories)
+      .filter(([, enabled]) => enabled === false)
+      .map(([k]) => k.toLowerCase())
+  );
+
+  return findings.filter((f) => {
+    const conf = CONFIDENCE_ORDER[f.confidence] ?? -1;
+    if (conf < minScore) return false;
+
+    if (disabled.size === 0) return true;
+
+    const cat = inferCategory(f);
+    if (!cat) {
+      // Unknown category: keep (do not drop on inference failure)
+      return true;
+    }
+    if (disabled.has(cat.toLowerCase())) return false;
+    // Explicit false for this key
+    if (categories[cat] === false) return false;
     return true;
   });
 }
