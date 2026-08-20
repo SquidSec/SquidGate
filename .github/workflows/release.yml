@@ -6,10 +6,7 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - '**.md'
-      - 'examples/**'
-      - 'docs/**'
+  workflow_dispatch:
 
 permissions:
   contents: write
