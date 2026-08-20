@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: [self-hosted, Linux, X64, squidsec]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -34,7 +34,7 @@ jobs:
 
   build:
     needs: test
-    runs-on: [self-hosted, Linux, X64, squidsec]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -65,7 +65,7 @@ jobs:
 
   release:
     needs: build
-    runs-on: [self-hosted, Linux, X64, squidsec]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
