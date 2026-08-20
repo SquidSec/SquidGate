@@ -34822,8 +34822,34 @@ exports.postPrComment = postPrComment;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
 const config_1 = __nccwpck_require__(5751);
+const GH_ATTEMPTS = 3;
+const GH_BASE_DELAY_MS = 500;
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function getClient(token) {
+    return github.getOctokit(token, { request: { timeout: 30000 } });
+}
+async function withRetry(label, fn) {
+    let lastErr;
+    for (let attempt = 1; attempt <= GH_ATTEMPTS; attempt++) {
+        try {
+            return await fn();
+        }
+        catch (e) {
+            lastErr = e;
+            if (attempt === GH_ATTEMPTS)
+                break;
+            const delay = GH_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+            const msg = e instanceof Error ? e.message : String(e);
+            core.warning(`${label} failed; retry ${attempt}/${GH_ATTEMPTS} in ${delay}ms: ${msg}`);
+            await sleep(delay);
+        }
+    }
+    throw lastErr;
+}
 async function createCheckRun(token, owner, repo, headSha, findings, summary, blockOn, annotate, extraSummaryNote) {
-    const octokit = github.getOctokit(token);
+    const client = getClient(token);
     const blockingFindings = findings.filter((f) => (0, config_1.shouldBlock)(f.severity, blockOn));
     const blockingCount = blockingFindings.length;
     const conclusion = blockingCount > 0 ? 'failure' : 'success';
@@ -34853,7 +34879,7 @@ async function createCheckRun(token, owner, repo, headSha, findings, summary, bl
     if (extraSummaryNote) {
         fullSummary += `\n\n${extraSummaryNote}`;
     }
-    const check = await octokit.rest.checks.create({
+    const check = await withRetry('GitHub checks.create', () => client.rest.checks.create({
         owner,
         repo,
         name: 'SquidGate',
@@ -34865,14 +34891,14 @@ async function createCheckRun(token, owner, repo, headSha, findings, summary, bl
             summary: fullSummary,
             annotations,
         },
-    });
+    }));
     core.info(`Check run created: ${check.data.html_url}`);
     return { conclusion, blockingCount };
 }
 async function postPrComment(token, owner, repo, pullNumber, findings, summary, blockingCount) {
     if (findings.length === 0)
         return;
-    const octokit = github.getOctokit(token);
+    const client = getClient(token);
     let body = `## 🛡️ Security Scan Results\n\n${summary}\n\n`;
     if (blockingCount > 0) {
         body += `**⛔ ${blockingCount} finding(s) block merge.**\n\n`;
@@ -34894,12 +34920,12 @@ async function postPrComment(token, owner, repo, pullNumber, findings, summary, 
     if (findings.length > shown.length) {
         body += `\n... and ${findings.length - shown.length} more findings. See check annotations for details.`;
     }
-    await octokit.rest.issues.createComment({
+    await withRetry('GitHub issues.createComment', () => client.rest.issues.createComment({
         owner,
         repo,
         issue_number: pullNumber,
         body,
-    });
+    }));
 }
 
 
@@ -35469,9 +35495,23 @@ async function run() {
         if (llmResponse.parse_error) {
             extraNotes.push(`⚠️ LLM response parse issue: ${llmResponse.parse_error}`);
         }
-        const { conclusion, blockingCount } = await (0, checks_1.createCheckRun)(token, owner, repo, headSha, filtered, llmResponse.summary, config.policy.block_on, config.output.annotate_lines, extraNotes.length ? extraNotes.join('\n') : undefined);
+        const blockingCount = filtered.filter((f) => (0, config_1.shouldBlock)(f.severity, config.policy.block_on)).length;
+        const conclusion = blockingCount > 0 ? 'failure' : 'success';
+        try {
+            await (0, checks_1.createCheckRun)(token, owner, repo, headSha, filtered, llmResponse.summary, config.policy.block_on, config.output.annotate_lines, extraNotes.length ? extraNotes.join('\n') : undefined);
+        }
+        catch (checkErr) {
+            const msg = checkErr instanceof Error ? checkErr.message : String(checkErr);
+            core.warning(`Failed to create GitHub check run after retries: ${msg}`);
+        }
         if (config.output.comment_on_pr) {
-            await (0, checks_1.postPrComment)(token, owner, repo, pullNumber, filtered, llmResponse.summary, blockingCount);
+            try {
+                await (0, checks_1.postPrComment)(token, owner, repo, pullNumber, filtered, llmResponse.summary, blockingCount);
+            }
+            catch (commentErr) {
+                const msg = commentErr instanceof Error ? commentErr.message : String(commentErr);
+                core.warning(`Failed to post PR comment after retries: ${msg}`);
+            }
         }
         core.setOutput('findings-count', filtered.length.toString());
         core.setOutput('blocking-findings-count', blockingCount.toString());

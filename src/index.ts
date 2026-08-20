@@ -5,6 +5,7 @@ import {
   DEFAULT_CONFIG,
   loadConfig,
   filterFindings,
+  shouldBlock,
 } from './config';
 import { buildSystemPrompt, buildUserPrompt } from './prompts';
 import { callLlm } from './llm';
@@ -156,28 +157,43 @@ async function run(): Promise<void> {
       extraNotes.push(`⚠️ LLM response parse issue: ${llmResponse.parse_error}`);
     }
 
-    const { conclusion, blockingCount } = await createCheckRun(
-      token,
-      owner,
-      repo,
-      headSha,
-      filtered,
-      llmResponse.summary,
-      config.policy.block_on,
-      config.output.annotate_lines,
-      extraNotes.length ? extraNotes.join('\n') : undefined
-    );
+    const blockingCount = filtered.filter((f) =>
+      shouldBlock(f.severity, config.policy.block_on)
+    ).length;
+    const conclusion = blockingCount > 0 ? 'failure' : 'success';
 
-    if (config.output.comment_on_pr) {
-      await postPrComment(
+    try {
+      await createCheckRun(
         token,
         owner,
         repo,
-        pullNumber,
+        headSha,
         filtered,
         llmResponse.summary,
-        blockingCount
+        config.policy.block_on,
+        config.output.annotate_lines,
+        extraNotes.length ? extraNotes.join('\n') : undefined
       );
+    } catch (checkErr: unknown) {
+      const msg = checkErr instanceof Error ? checkErr.message : String(checkErr);
+      core.warning(`Failed to create GitHub check run after retries: ${msg}`);
+    }
+
+    if (config.output.comment_on_pr) {
+      try {
+        await postPrComment(
+          token,
+          owner,
+          repo,
+          pullNumber,
+          filtered,
+          llmResponse.summary,
+          blockingCount
+        );
+      } catch (commentErr: unknown) {
+        const msg = commentErr instanceof Error ? commentErr.message : String(commentErr);
+        core.warning(`Failed to post PR comment after retries: ${msg}`);
+      }
     }
 
     core.setOutput('findings-count', filtered.length.toString());
