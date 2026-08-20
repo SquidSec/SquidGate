@@ -70,4 +70,14 @@ describe('checks', () => {
     await postPrComment('t', 'o', 'r', 1, [], 'none', 0);
     expect(mockCreateComment).not.toHaveBeenCalled();
   });
+
+  it('retries GitHub API then succeeds', async () => {
+    mockCreate
+      .mockRejectedValueOnce(new Error('Connect Timeout Error'))
+      .mockResolvedValue({ data: { html_url: 'https://ex' } });
+
+    const result = await createCheckRun('t', 'o', 'r', 's', sampleFindings, 'ok', 'high', false);
+    expect(result.conclusion).toBe('failure');
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+  });
 });

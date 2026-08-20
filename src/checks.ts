@@ -5,6 +5,34 @@ import { shouldBlock } from './config';
 
 export type { Finding };
 
+const GH_ATTEMPTS = 3;
+const GH_BASE_DELAY_MS = 500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getClient(token: string) {
+  return github.getOctokit(token, { request: { timeout: 30000 } });
+}
+
+async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= GH_ATTEMPTS; attempt++) {
+    try {
+      return await fn();
+    } catch (e: unknown) {
+      lastErr = e;
+      if (attempt === GH_ATTEMPTS) break;
+      const delay = GH_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+      const msg = e instanceof Error ? e.message : String(e);
+      core.warning(`${label} failed; retry ${attempt}/${GH_ATTEMPTS} in ${delay}ms: ${msg}`);
+      await sleep(delay);
+    }
+  }
+  throw lastErr;
+}
+
 export async function createCheckRun(
   token: string,
   owner: string,
@@ -16,7 +44,7 @@ export async function createCheckRun(
   annotate: boolean,
   extraSummaryNote?: string
 ): Promise<{ conclusion: string; blockingCount: number }> {
-  const octokit = github.getOctokit(token);
+  const client = getClient(token);
 
   const blockingFindings = findings.filter((f) => shouldBlock(f.severity, blockOn));
   const blockingCount = blockingFindings.length;
@@ -52,19 +80,21 @@ export async function createCheckRun(
     fullSummary += `\n\n${extraSummaryNote}`;
   }
 
-  const check = await octokit.rest.checks.create({
-    owner,
-    repo,
-    name: 'SquidGate',
-    head_sha: headSha,
-    status: 'completed',
-    conclusion: conclusion as 'success' | 'failure' | 'neutral' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required',
-    output: {
-      title,
-      summary: fullSummary,
-      annotations,
-    },
-  });
+  const check = await withRetry('GitHub checks.create', () =>
+    client.rest.checks.create({
+      owner,
+      repo,
+      name: 'SquidGate',
+      head_sha: headSha,
+      status: 'completed',
+      conclusion: conclusion as 'success' | 'failure' | 'neutral' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required',
+      output: {
+        title,
+        summary: fullSummary,
+        annotations,
+      },
+    })
+  );
 
   core.info(`Check run created: ${check.data.html_url}`);
 
@@ -82,7 +112,7 @@ export async function postPrComment(
 ): Promise<void> {
   if (findings.length === 0) return;
 
-  const octokit = github.getOctokit(token);
+  const client = getClient(token);
 
   let body = `## 🛡️ Security Scan Results\n\n${summary}\n\n`;
 
@@ -108,10 +138,12 @@ export async function postPrComment(
     body += `\n... and ${findings.length - shown.length} more findings. See check annotations for details.`;
   }
 
-  await octokit.rest.issues.createComment({
-    owner,
-    repo,
-    issue_number: pullNumber,
-    body,
-  });
+  await withRetry('GitHub issues.createComment', () =>
+    client.rest.issues.createComment({
+      owner,
+      repo,
+      issue_number: pullNumber,
+      body,
+    })
+  );
 }
