@@ -165,6 +165,7 @@ policy:
 
 context:
   lines_before: 30
+  lines_after: 30
   max_files: 50
   max_diff_bytes: 500000
 
@@ -219,7 +220,7 @@ uses: SquidSec/SquidGate@abc123def
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `llm-api-key` | **Yes** | — | Provider API key |
-| `github-token` | No | `${{ github.token }}` | `checks` + `pull-requests` + `contents` |
+| `github-token` | No | `${{ github.token }}` | `checks` + `pull-requests` + `contents` (retried on timeout) |
 | `config-path` | No | `.github/squidgate.yml` | Config path |
 | `llm-provider` | No | config / `openai` | `openai` \| `anthropic` \| `azure` \| `google` \| `custom` |
 | `llm-model` | No | config / `gpt-4o` | Model id |
@@ -232,7 +233,7 @@ uses: SquidSec/SquidGate@abc123def
 |--------|-------------|
 | `findings-count` | Findings after confidence filter |
 | `blocking-findings-count` | Findings ≥ `block_on` |
-| `conclusion` | `success` \| `failure` |
+| `conclusion` | `success` \| `failure` \| `neutral` (`neutral` when `fail_on_error` is false and the scan errors) |
 
 ---
 
@@ -241,6 +242,7 @@ uses: SquidSec/SquidGate@abc123def
 - Diffs go **only** to the LLM endpoint **you** configure  
 - SquidSec does **not** receive or store your code  
 - Least-privilege permissions; self-hosted runners + private models supported  
+- GitHub API calls retry with backoff; a failed PR comment does not fail the security gate  
 
 → [docs/privacy.md](docs/privacy.md)
 
@@ -252,19 +254,19 @@ uses: SquidSec/SquidGate@abc123def
 PR opened / updated
         │
         ▼
-  Unified diff (+ context)
+  Unified diff (GitHub API first; git merge-base fallback)
         │
         ▼
   Policy-aware prompts (temperature 0, JSON)
         │
         ▼
-  Your LLM
+  Your LLM (retries on 429/5xx; JSON re-prompt)
         │
         ▼
-  Filter → annotate → PR comment
+  Category + confidence filter → annotate → PR comment
         │
         ▼
-  Fail check if finding ≥ block_on
+  Fail check if finding ≥ block_on (`none` never blocks)
 ```
 
 ---

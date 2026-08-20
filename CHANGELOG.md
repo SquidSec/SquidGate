@@ -15,6 +15,7 @@ Release tags: **`v{semver}-build.{N}`**, with floating **`v1`** / **`v1.0`**.
 - **Prompts:** few-shot secret/injection examples; disabled-category instructions; `category` field in schema
 - **Checks:** single `shouldBlock` implementation; truncation warnings in check output
 - **`block_on: none`:** correctly never blocks merge
+- **Docs:** README matches API-first diffs, retries, `neutral` conclusion, and `lines_after`
 
 ## [1.0.0] — 2026-07-28
 
