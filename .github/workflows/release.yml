@@ -1,6 +1,6 @@
 name: Build and Release
 
-# Every merge/push to main: test, rebuild dist, publish GitHub Release
+# Every merge/push to main: test, verify dist, publish GitHub Release
 # Tags: v{version}-build.{N}  + floating v1 / v1.0
 on:
   push:
@@ -16,31 +16,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
+  release:
     runs-on: [self-hosted, Linux, X64, squidsec]
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - run: npm ci
       - run: npm test
-
-  build:
-    needs: test
-    runs-on: [self-hosted, Linux, X64, squidsec]
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - run: npm ci
       - run: npm run build
 
       - name: Verify dist is committed and current
@@ -49,24 +38,6 @@ jobs:
             echo "::error::dist/ is stale. Run npm run build and commit dist/ before merge."
             exit 1
           }
-
-      - name: Upload dist artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: squidgate-dist
-          path: |
-            dist/index.js
-            dist/licenses.txt
-            action.yml
-          if-no-files-found: error
-
-  release:
-    needs: build
-    runs-on: [self-hosted, Linux, X64, squidsec]
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
 
       - name: Prepare release metadata
         id: meta
@@ -99,11 +70,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Immutable build tag
           git tag -a "$TAG" -m "SquidGate ${{ steps.meta.outputs.base_version }} build ${{ github.run_number }}"
           git push origin "$TAG"
 
-          # Floating tags consumers pin: v1, v1.0, and exact semver
           for T in "$MAJOR" "$MINOR" "$SEMVER"; do
             git tag -f -a "$T" -m "SquidGate floating tag $T → $TAG"
             git push -f origin "refs/tags/$T"
@@ -130,7 +99,7 @@ jobs:
             ### Use in workflows
 
             ```yaml
-            - uses: SquidSec/SquidGate@v1.0.0-build.4
+            - uses: SquidSec/SquidGate@v1
               with:
                 llm-api-key: ${{ '${{ secrets.LLM_API_KEY }}' }}
             ```
