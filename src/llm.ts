@@ -1,5 +1,5 @@
 import * as core from '@actions/core';
-import { DEFAULT_CONFIG, OPENCODE_GO_DEFAULT_MODEL } from './config';
+import { DEFAULT_CONFIG, OPENCODE_GO_DEFAULT_MODEL, normalizeConfidence, normalizeSeverity } from './config';
 import type { Finding, LlmResponse } from './types';
 
 export { OPENCODE_GO_DEFAULT_MODEL };
@@ -75,7 +75,22 @@ function sleep(ms: number): Promise<void> {
 
 export function normalizeResponse(resp: unknown): LlmResponse {
   const r = (resp && typeof resp === 'object' ? resp : {}) as Record<string, unknown>;
-  const findings = Array.isArray(r.findings) ? (r.findings as Finding[]) : [];
+  const rawFindings = Array.isArray(r.findings) ? r.findings : [];
+  // Models vary casing and skip fields. Normalize so policy filtering and
+  // blocking decisions see canonical values.
+  const findings = rawFindings.map((item) => {
+    const f = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+    const startLine = Number(f.start_line);
+    const endLine = Number(f.end_line);
+    return {
+      ...f,
+      file: typeof f.file === 'string' ? f.file : '',
+      start_line: Number.isFinite(startLine) ? startLine : 1,
+      end_line: Number.isFinite(endLine) ? endLine : Number.isFinite(startLine) ? startLine : 1,
+      severity: normalizeSeverity(f.severity),
+      confidence: normalizeConfidence(f.confidence),
+    } as Finding;
+  });
   const summary = typeof r.summary === 'string' ? r.summary : '';
   return { findings, summary };
 }

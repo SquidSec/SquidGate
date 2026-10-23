@@ -120,46 +120,65 @@ async function run(): Promise<void> {
     } catch (llmErr: unknown) {
       const msg = llmErr instanceof Error ? llmErr.message : String(llmErr);
       core.error(`LLM call failed: ${msg}`);
+      // A scan that did not run must never look like a clean scan.
+      const conclusion = config.output.fail_on_error ? 'failure' : 'neutral';
+      try {
+        await createCheckRun(
+          token,
+          owner,
+          repo,
+          headSha,
+          [],
+          `LLM call failed: ${msg}`,
+          config.policy.block_on,
+          false,
+          config.output.fail_on_error
+            ? 'Check failed because the LLM provider call errored (fail_on_error: true).'
+            : 'fail_on_error is false — no security scan ran, so the gate did not pass.',
+          conclusion
+        );
+      } catch {
+        /* ignore check create failure */
+      }
+      core.setOutput('findings-count', '0');
+      core.setOutput('blocking-findings-count', '0');
+      core.setOutput('conclusion', conclusion);
       if (config.output.fail_on_error) {
-        try {
-          await createCheckRun(
-            token,
-            owner,
-            repo,
-            headSha,
-            [],
-            `LLM call failed: ${msg}`,
-            config.policy.block_on,
-            false,
-            'Check failed because the LLM provider call errored (fail_on_error: true).'
-          );
-        } catch {
-          /* ignore check create failure */
-        }
         core.setFailed(`LLM call failed: ${msg}`);
       } else {
-        core.warning('fail_on_error is false, marking neutral / continuing without findings.');
-        try {
-          await createCheckRun(
-            token,
-            owner,
-            repo,
-            headSha,
-            [],
-            `LLM call failed (non-blocking): ${msg}`,
-            'none',
-            false,
-            'fail_on_error is false — check concluded success with no findings.'
-          );
-        } catch {
-          /* ignore */
-        }
+        core.warning('fail_on_error is false, so the job did not fail. No scan ran.');
       }
       return;
     }
 
     if (llmResponse.parse_error) {
       core.warning(`LLM JSON parse issue: ${llmResponse.parse_error}`);
+      // Unparseable output is not evidence of a clean diff. Fail closed unless
+      // the caller opted out, matching the provider-error behavior.
+      const conclusion = config.output.fail_on_error ? 'failure' : 'neutral';
+      try {
+        await createCheckRun(
+          token,
+          owner,
+          repo,
+          headSha,
+          [],
+          `LLM response could not be parsed: ${llmResponse.parse_error}`,
+          config.policy.block_on,
+          false,
+          'The model did not return parseable JSON, so no findings were evaluated.',
+          conclusion
+        );
+      } catch {
+        /* ignore check create failure */
+      }
+      core.setOutput('findings-count', '0');
+      core.setOutput('blocking-findings-count', '0');
+      core.setOutput('conclusion', conclusion);
+      if (config.output.fail_on_error) {
+        core.setFailed(`LLM response could not be parsed: ${llmResponse.parse_error}`);
+      }
+      return;
     }
 
     const filtered = filterFindings(llmResponse.findings, config);
@@ -173,9 +192,6 @@ async function run(): Promise<void> {
         `⚠️ Diff was truncated (${diffResult.originalBytes} → ${config.context.max_diff_bytes} bytes). ` +
           `Findings may be incomplete.`
       );
-    }
-    if (llmResponse.parse_error) {
-      extraNotes.push(`⚠️ LLM response parse issue: ${llmResponse.parse_error}`);
     }
 
     const blockingCount = filtered.filter((f) =>

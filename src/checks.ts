@@ -42,13 +42,16 @@ export async function createCheckRun(
   summary: string,
   blockOn: string,
   annotate: boolean,
-  extraSummaryNote?: string
+  extraSummaryNote?: string,
+  /** Overrides the findings-derived conclusion. Used when no scan ran. */
+  forcedConclusion?: 'success' | 'failure' | 'neutral'
 ): Promise<{ conclusion: string; blockingCount: number }> {
   const client = getClient(token);
 
   const blockingFindings = findings.filter((f) => shouldBlock(f.severity, blockOn));
   const blockingCount = blockingFindings.length;
-  const conclusion = blockingCount > 0 ? 'failure' : 'success';
+  const conclusion =
+    forcedConclusion ?? (blockingCount > 0 ? 'failure' : 'success');
 
   const annotations = annotate
     ? findings.slice(0, 50).map((f) => ({
