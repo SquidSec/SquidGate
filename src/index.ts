@@ -13,7 +13,12 @@ import { buildSystemPrompt, buildUserPrompt } from './prompts';
 import { callLlm } from './llm';
 import type { BlockOn, LlmResponse } from './types';
 import { createCheckRun, postPrComment } from './checks';
-import { extractAnnotationScope, getChangedFiles, getPullRequestDiff } from './diff';
+import {
+  extractAnnotationScope,
+  filterDiff,
+  getChangedFiles,
+  getPullRequestDiff,
+} from './diff';
 
 async function run(): Promise<void> {
   try {
@@ -94,9 +99,29 @@ async function run(): Promise<void> {
       return;
     }
 
+    // Ignored paths and oversized files are not worth sending to the model.
+    const scoped = filterDiff(diffResult.diff, {
+      ignore: config.context.ignore,
+      maxFileBytes: config.context.max_file_bytes,
+    });
+    if (scoped.skipped.length > 0) {
+      core.info(
+        `Skipping ${scoped.skipped.length} file(s) via context.ignore / max_file_bytes: ` +
+          scoped.skipped.slice(0, 10).join(', ') +
+          (scoped.skipped.length > 10 ? ', …' : '')
+      );
+    }
+    if (!scoped.diff.trim()) {
+      core.notice('All changed files were filtered out; nothing to scan.');
+      core.setOutput('findings-count', '0');
+      core.setOutput('blocking-findings-count', '0');
+      core.setOutput('conclusion', 'success');
+      return;
+    }
+
     const systemPrompt = buildSystemPrompt(config);
     const userPrompt = buildUserPrompt(
-      diffResult.diff,
+      scoped.diff,
       changedFiles,
       config,
       diffResult.truncated
@@ -211,7 +236,7 @@ async function run(): Promise<void> {
         config.output.annotate_lines,
         extraNotes.length ? extraNotes.join('\n') : undefined,
         undefined,
-        config.output.annotate_lines ? extractAnnotationScope(diffResult.diff) : undefined
+        config.output.annotate_lines ? extractAnnotationScope(scoped.diff) : undefined
       );
     } catch (checkErr: unknown) {
       const msg = checkErr instanceof Error ? checkErr.message : String(checkErr);

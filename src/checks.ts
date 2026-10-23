@@ -188,6 +188,9 @@ export async function createCheckRun(
   return { conclusion, blockingCount };
 }
 
+/** Marker used to find our own comment on later runs. */
+const COMMENT_MARKER = '<!-- squidgate:scan -->';
+
 export async function postPrComment(
   token: string,
   owner: string,
@@ -195,13 +198,14 @@ export async function postPrComment(
   pullNumber: number,
   findings: Finding[],
   summary: string,
-  blockingCount: number
+  blockingCount: number,
+  options: { upsert?: boolean } = {}
 ): Promise<void> {
   if (findings.length === 0) return;
 
   const client = getClient(token);
 
-  let body = `## 🛡️ Security Scan Results\n\n${summary}\n\n`;
+  let body = `${COMMENT_MARKER}\n## 🛡️ Security Scan Results\n\n${summary}\n\n`;
 
   if (blockingCount > 0) {
     body += `**⛔ ${blockingCount} finding(s) block merge.**\n\n`;
@@ -222,8 +226,37 @@ export async function postPrComment(
     body += `**Recommendation:** ${f.recommendation}\n\n---\n`;
   }
 
-  if (findings.length > shown.length) {
-    body += `\n... and ${findings.length - shown.length} more findings. See check annotations for details.`;
+  if (ordered.length > shown.length) {
+    body += `\n... and ${ordered.length - shown.length} more findings. See check annotations for details.`;
+  }
+
+  // A PR that is pushed to repeatedly would otherwise collect one comment per
+  // push. Edit our previous comment instead of adding another.
+  if (options.upsert !== false) {
+    let mine: { id: number; html_url?: string } | undefined;
+    try {
+      const existing = await withRetry('GitHub issues.listComments', () =>
+        client.rest.issues.listComments({
+          owner,
+          repo,
+          issue_number: pullNumber,
+          per_page: 100,
+        })
+      );
+      mine = existing.data.find((c) => c.body?.startsWith(COMMENT_MARKER));
+    } catch (e: unknown) {
+      // Lookup failure should not stop the scan from reporting.
+      const msg = e instanceof Error ? e.message : String(e);
+      core.warning(`Could not look up an existing comment (${msg}); posting a new one.`);
+    }
+
+    if (mine) {
+      await withRetry('GitHub issues.updateComment', () =>
+        client.rest.issues.updateComment({ owner, repo, comment_id: mine!.id, body })
+      );
+      core.info(`Updated existing SquidGate comment: ${mine.html_url}`);
+      return;
+    }
   }
 
   await withRetry('GitHub issues.createComment', () =>

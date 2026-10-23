@@ -36,6 +36,11 @@ context:
   lines_after: 30
   max_files: 50
   max_diff_bytes: 500000
+  ignore:
+    - "**/package-lock.json"
+    - "**/*.min.js"
+    - "**/dist/**"
+  max_file_bytes: 100000
 
 output:
   comment_on_pr: true
@@ -60,6 +65,24 @@ output:
 | `high` | Only clear issues |
 | `medium` | **Default** |
 | `low` | Include speculative findings |
+
+## `context.ignore` and `max_file_bytes`
+
+Paths matching these glob patterns are removed before the diff is sent, so
+lockfiles, minified bundles, and vendored trees are not billed or reviewed.
+`*` matches within a path segment; `**` spans segments. `?` matches one
+character.
+
+```yaml
+context:
+  ignore:
+    - "**/package-lock.json"
+    - "**/vendor/**"
+    - "docs/**"
+  max_file_bytes: 100000   # skip any single file diff larger than 100 KB
+```
+
+Skipped files are listed in the job log. Set `ignore: []` to scan everything.
 
 ## Providers
 
