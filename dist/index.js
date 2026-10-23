@@ -34972,11 +34972,13 @@ annotationScope) {
     core.info(`Check run created: ${check.data.html_url}`);
     return { conclusion, blockingCount };
 }
-async function postPrComment(token, owner, repo, pullNumber, findings, summary, blockingCount) {
+/** Marker used to find our own comment on later runs. */
+const COMMENT_MARKER = '<!-- squidgate:scan -->';
+async function postPrComment(token, owner, repo, pullNumber, findings, summary, blockingCount, options = {}) {
     if (findings.length === 0)
         return;
     const client = getClient(token);
-    let body = `## 🛡️ Security Scan Results\n\n${summary}\n\n`;
+    let body = `${COMMENT_MARKER}\n## 🛡️ Security Scan Results\n\n${summary}\n\n`;
     if (blockingCount > 0) {
         body += `**⛔ ${blockingCount} finding(s) block merge.**\n\n`;
     }
@@ -34995,8 +34997,32 @@ async function postPrComment(token, owner, repo, pullNumber, findings, summary, 
         }
         body += `**Recommendation:** ${f.recommendation}\n\n---\n`;
     }
-    if (findings.length > shown.length) {
-        body += `\n... and ${findings.length - shown.length} more findings. See check annotations for details.`;
+    if (ordered.length > shown.length) {
+        body += `\n... and ${ordered.length - shown.length} more findings. See check annotations for details.`;
+    }
+    // A PR that is pushed to repeatedly would otherwise collect one comment per
+    // push. Edit our previous comment instead of adding another.
+    if (options.upsert !== false) {
+        let mine;
+        try {
+            const existing = await withRetry('GitHub issues.listComments', () => client.rest.issues.listComments({
+                owner,
+                repo,
+                issue_number: pullNumber,
+                per_page: 100,
+            }));
+            mine = existing.data.find((c) => c.body?.startsWith(COMMENT_MARKER));
+        }
+        catch (e) {
+            // Lookup failure should not stop the scan from reporting.
+            const msg = e instanceof Error ? e.message : String(e);
+            core.warning(`Could not look up an existing comment (${msg}); posting a new one.`);
+        }
+        if (mine) {
+            await withRetry('GitHub issues.updateComment', () => client.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body }));
+            core.info(`Updated existing SquidGate comment: ${mine.html_url}`);
+            return;
+        }
     }
     await withRetry('GitHub issues.createComment', () => client.rest.issues.createComment({
         owner,
@@ -35098,6 +35124,24 @@ exports.DEFAULT_CONFIG = {
         lines_after: 30,
         max_files: 50,
         max_diff_bytes: 500000,
+        // Noise that rarely holds reviewable security context and often consumes
+        // the token budget. Users can override this list.
+        ignore: [
+            '**/package-lock.json',
+            '**/yarn.lock',
+            '**/pnpm-lock.yaml',
+            '**/Cargo.lock',
+            '**/go.sum',
+            '**/composer.lock',
+            '**/poetry.lock',
+            '**/*.min.js',
+            '**/*.min.css',
+            '**/*.map',
+            '**/dist/**',
+            '**/vendor/**',
+            '**/node_modules/**',
+        ],
+        max_file_bytes: 100000,
     },
     output: {
         comment_on_pr: true,
@@ -35496,6 +35540,8 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.matchesIgnorePattern = matchesIgnorePattern;
+exports.filterDiff = filterDiff;
 exports.extractAnnotationScope = extractAnnotationScope;
 exports.getPullRequestDiff = getPullRequestDiff;
 exports.getChangedFiles = getChangedFiles;
@@ -35527,6 +35573,83 @@ function truncateDiff(diff, maxBytes) {
     const msg = `\n... [diff truncated: ${originalBytes} bytes → ${maxBytes} byte limit; ` +
         `raise context.max_diff_bytes if needed]\n`;
     return { diff: cut + msg, truncated: true, originalBytes };
+}
+/**
+ * Convert a glob-ish pattern (`*`, `**`, `?`) to a RegExp anchored at both ends.
+ * `**` spans path separators; `*` does not.
+ */
+function globToRegExp(pattern) {
+    let out = '';
+    for (let i = 0; i < pattern.length; i++) {
+        const ch = pattern[i];
+        if (ch === '*') {
+            if (pattern[i + 1] === '*') {
+                i++;
+                // Collapse `**/` so `**/x` also matches a top-level `x`.
+                if (pattern[i + 1] === '/') {
+                    i++;
+                    out += '(?:.*/)?';
+                }
+                else {
+                    out += '.*';
+                }
+            }
+            else {
+                out += '[^/]*';
+            }
+        }
+        else if (ch === '?') {
+            out += '[^/]';
+        }
+        else {
+            out += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+        }
+    }
+    return new RegExp(`^${out}$`);
+}
+function matchesIgnorePattern(file, patterns) {
+    return patterns.some((p) => {
+        if (!p)
+            return false;
+        try {
+            return globToRegExp(p).test(file);
+        }
+        catch {
+            return false;
+        }
+    });
+}
+/**
+ * Drop ignored paths and oversized files from a unified diff, so lockfiles,
+ * vendored trees, and generated bundles are not sent to the model.
+ */
+function filterDiff(diff, options = {}) {
+    const ignore = options.ignore ?? [];
+    const maxFileBytes = options.maxFileBytes ?? Infinity;
+    const sections = diff.split(/^(?=diff --git )/m);
+    const kept = [];
+    const skipped = [];
+    for (const section of sections) {
+        if (!section.trim())
+            continue;
+        const target = section.match(/^diff --git a\/(.+?) b\/(.+)$/m);
+        const path = target ? target[2] : null;
+        if (!path) {
+            // Leading text or the truncation notice; keep it verbatim.
+            kept.push(section);
+            continue;
+        }
+        if (matchesIgnorePattern(path, ignore)) {
+            skipped.push(path);
+            continue;
+        }
+        if (Buffer.byteLength(section, 'utf8') > maxFileBytes) {
+            skipped.push(path);
+            continue;
+        }
+        kept.push(section);
+    }
+    return { diff: kept.join(''), skipped };
 }
 /**
  * Map each file in a unified diff to the new-file line ranges its hunks cover.
@@ -35794,8 +35917,25 @@ async function run() {
             core.setOutput('conclusion', 'success');
             return;
         }
+        // Ignored paths and oversized files are not worth sending to the model.
+        const scoped = (0, diff_1.filterDiff)(diffResult.diff, {
+            ignore: config.context.ignore,
+            maxFileBytes: config.context.max_file_bytes,
+        });
+        if (scoped.skipped.length > 0) {
+            core.info(`Skipping ${scoped.skipped.length} file(s) via context.ignore / max_file_bytes: ` +
+                scoped.skipped.slice(0, 10).join(', ') +
+                (scoped.skipped.length > 10 ? ', …' : ''));
+        }
+        if (!scoped.diff.trim()) {
+            core.notice('All changed files were filtered out; nothing to scan.');
+            core.setOutput('findings-count', '0');
+            core.setOutput('blocking-findings-count', '0');
+            core.setOutput('conclusion', 'success');
+            return;
+        }
         const systemPrompt = (0, prompts_1.buildSystemPrompt)(config);
-        const userPrompt = (0, prompts_1.buildUserPrompt)(diffResult.diff, changedFiles, config, diffResult.truncated);
+        const userPrompt = (0, prompts_1.buildUserPrompt)(scoped.diff, changedFiles, config, diffResult.truncated);
         core.info('Calling LLM for security analysis...');
         let llmResponse;
         try {
@@ -35857,7 +35997,7 @@ async function run() {
         const blockingCount = filtered.filter((f) => (0, config_1.shouldBlock)(f.severity, config.policy.block_on)).length;
         const conclusion = blockingCount > 0 ? 'failure' : 'success';
         try {
-            await (0, checks_1.createCheckRun)(token, owner, repo, headSha, filtered, llmResponse.summary, config.policy.block_on, config.output.annotate_lines, extraNotes.length ? extraNotes.join('\n') : undefined, undefined, config.output.annotate_lines ? (0, diff_1.extractAnnotationScope)(diffResult.diff) : undefined);
+            await (0, checks_1.createCheckRun)(token, owner, repo, headSha, filtered, llmResponse.summary, config.policy.block_on, config.output.annotate_lines, extraNotes.length ? extraNotes.join('\n') : undefined, undefined, config.output.annotate_lines ? (0, diff_1.extractAnnotationScope)(scoped.diff) : undefined);
         }
         catch (checkErr) {
             const msg = checkErr instanceof Error ? checkErr.message : String(checkErr);

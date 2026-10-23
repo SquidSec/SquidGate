@@ -57,6 +57,24 @@ export const DEFAULT_CONFIG: SecurityScanConfig = {
     lines_after: 30,
     max_files: 50,
     max_diff_bytes: 500000,
+    // Noise that rarely holds reviewable security context and often consumes
+    // the token budget. Users can override this list.
+    ignore: [
+      '**/package-lock.json',
+      '**/yarn.lock',
+      '**/pnpm-lock.yaml',
+      '**/Cargo.lock',
+      '**/go.sum',
+      '**/composer.lock',
+      '**/poetry.lock',
+      '**/*.min.js',
+      '**/*.min.css',
+      '**/*.map',
+      '**/dist/**',
+      '**/vendor/**',
+      '**/node_modules/**',
+    ],
+    max_file_bytes: 100000,
   },
   output: {
     comment_on_pr: true,

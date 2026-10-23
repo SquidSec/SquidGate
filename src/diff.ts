@@ -47,6 +47,90 @@ function truncateDiff(diff: string, maxBytes: number): { diff: string; truncated
 }
 
 /**
+ * Convert a glob-ish pattern (`*`, `**`, `?`) to a RegExp anchored at both ends.
+ * `**` spans path separators; `*` does not.
+ */
+function globToRegExp(pattern: string): RegExp {
+  let out = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '*') {
+      if (pattern[i + 1] === '*') {
+        i++;
+        // Collapse `**/` so `**/x` also matches a top-level `x`.
+        if (pattern[i + 1] === '/') {
+          i++;
+          out += '(?:.*/)?';
+        } else {
+          out += '.*';
+        }
+      } else {
+        out += '[^/]*';
+      }
+    } else if (ch === '?') {
+      out += '[^/]';
+    } else {
+      out += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    }
+  }
+  return new RegExp(`^${out}$`);
+}
+
+export function matchesIgnorePattern(file: string, patterns: string[]): boolean {
+  return patterns.some((p) => {
+    if (!p) return false;
+    try {
+      return globToRegExp(p).test(file);
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * Drop ignored paths and oversized files from a unified diff, so lockfiles,
+ * vendored trees, and generated bundles are not sent to the model.
+ */
+export function filterDiff(
+  diff: string,
+  options: { ignore?: string[]; maxFileBytes?: number } = {}
+): { diff: string; skipped: string[] } {
+  const ignore = options.ignore ?? [];
+  const maxFileBytes = options.maxFileBytes ?? Infinity;
+
+  const sections = diff.split(/^(?=diff --git )/m);
+  const kept: string[] = [];
+  const skipped: string[] = [];
+
+  for (const section of sections) {
+    if (!section.trim()) continue;
+
+    const target = section.match(/^diff --git a\/(.+?) b\/(.+)$/m);
+    const path = target ? target[2] : null;
+
+    if (!path) {
+      // Leading text or the truncation notice; keep it verbatim.
+      kept.push(section);
+      continue;
+    }
+
+    if (matchesIgnorePattern(path, ignore)) {
+      skipped.push(path);
+      continue;
+    }
+
+    if (Buffer.byteLength(section, 'utf8') > maxFileBytes) {
+      skipped.push(path);
+      continue;
+    }
+
+    kept.push(section);
+  }
+
+  return { diff: kept.join(''), skipped };
+}
+
+/**
  * Map each file in a unified diff to the new-file line ranges its hunks cover.
  * GitHub rejects annotations outside these ranges.
  */

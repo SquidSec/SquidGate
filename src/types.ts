@@ -56,6 +56,10 @@ export interface SecurityScanConfig {
     lines_after: number;
     max_files: number;
     max_diff_bytes: number;
+    /** Glob-ish path patterns to skip entirely (lockfiles, vendored code). */
+    ignore: string[];
+    /** Skip individual files larger than this many bytes. */
+    max_file_bytes: number;
   };
   output: {
     comment_on_pr: boolean;
