@@ -75,9 +75,16 @@ jobs:
           git tag -a "$TAG" -m "SquidGate ${{ steps.meta.outputs.base_version }} build ${{ github.run_number }}"
           git push origin "$TAG"
 
+          # Floating tags are force-updated. A rejected update (for example a
+          # concurrent run) must not fail the release now that the build tag
+          # and release are already published.
           for T in "$MAJOR" "$MINOR" "$SEMVER"; do
             git tag -f -a "$T" -m "SquidGate floating tag $T → $TAG"
-            git push -f origin "refs/tags/$T"
+            if git push -f origin "refs/tags/$T"; then
+              echo "Moved $T to $TAG"
+            else
+              echo "::warning title=Tag update failed::Could not move floating tag $T to $TAG. The build tag $TAG is published."
+            fi
           done
 
       - name: Create GitHub Release
