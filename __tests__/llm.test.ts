@@ -290,6 +290,40 @@ describe('callLlm HTTP requests', () => {
   });
 });
 
+describe('request timeout', () => {
+  const realFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = realFetch;
+  });
+
+  it('passes an abort signal to fetch', async () => {
+    let seen: unknown;
+    global.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+      seen = init.signal;
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '{"findings":[],"summary":"ok"}' } }] }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+
+    const { callLlm } = require('../src/llm');
+    await callLlm('openai', 'gpt-4o', 'k', 's', 'u');
+    expect(seen).toBeInstanceOf(AbortSignal);
+  });
+
+  it('reports a timeout instead of a raw abort error', async () => {
+    global.fetch = jest.fn(async () => {
+      const err = new Error('The operation was aborted due to timeout');
+      err.name = 'TimeoutError';
+      throw err;
+    }) as unknown as typeof fetch;
+
+    const { callLlm } = require('../src/llm');
+    await expect(callLlm('openai', 'gpt-4o', 'k', 's', 'u')).rejects.toThrow(/timed out after/);
+  }, 15000);
+});
+
 describe('extractJson robustness', () => {
   it('prefers the answer over a leading schema example', () => {
     const text = 'Schema: {"findings":[],"summary":"template"} Real: {"findings":[{"severity":"critical","title":"RCE"}],"summary":"real"}';

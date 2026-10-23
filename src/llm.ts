@@ -16,6 +16,12 @@ const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 800;
 
+/**
+ * Per-attempt request timeout. Without this a hung provider blocks the job
+ * until the workflow timeout.
+ */
+export const LLM_REQUEST_TIMEOUT_MS = 120_000;
+
 /** OpenCode Go chat completions. `llm-base-url` is not used. */
 export const OPENCODE_GO_CHAT_COMPLETIONS_URL =
   'https://opencode.ai/inference/go/openai/v1/chat/completions';
@@ -264,7 +270,10 @@ async function fetchWithRetry(
   let lastErr: Error | undefined;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const res = await fetch(url, init);
+      const res = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
+      });
       if (res.ok) return res;
 
       const errText = await res.text();
@@ -277,7 +286,13 @@ async function fetchWithRetry(
       await sleep(delay);
     } catch (e: unknown) {
       if (e instanceof Error && e.message.includes(' error (')) throw e;
-      lastErr = e instanceof Error ? e : new Error(String(e));
+      // A timeout is a network-level failure and is retried like one.
+      const timedOut = e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
+      lastErr = timedOut
+        ? new Error(`${label} timed out after ${LLM_REQUEST_TIMEOUT_MS}ms`)
+        : e instanceof Error
+          ? e
+          : new Error(String(e));
       if (attempt === MAX_ATTEMPTS) throw lastErr;
       const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
       core.warning(`${label} network error; retry ${attempt}/${MAX_ATTEMPTS} in ${delay}ms: ${lastErr.message}`);

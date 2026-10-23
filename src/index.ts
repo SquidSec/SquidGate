@@ -13,7 +13,7 @@ import { buildSystemPrompt, buildUserPrompt } from './prompts';
 import { callLlm } from './llm';
 import type { BlockOn, LlmResponse } from './types';
 import { createCheckRun, postPrComment } from './checks';
-import { getChangedFiles, getPullRequestDiff } from './diff';
+import { extractAnnotationScope, getChangedFiles, getPullRequestDiff } from './diff';
 
 async function run(): Promise<void> {
   try {
@@ -209,7 +209,9 @@ async function run(): Promise<void> {
         llmResponse.summary,
         config.policy.block_on,
         config.output.annotate_lines,
-        extraNotes.length ? extraNotes.join('\n') : undefined
+        extraNotes.length ? extraNotes.join('\n') : undefined,
+        undefined,
+        config.output.annotate_lines ? extractAnnotationScope(diffResult.diff) : undefined
       );
     } catch (checkErr: unknown) {
       const msg = checkErr instanceof Error ? checkErr.message : String(checkErr);
