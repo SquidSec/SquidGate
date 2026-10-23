@@ -34848,11 +34848,13 @@ async function withRetry(label, fn) {
     }
     throw lastErr;
 }
-async function createCheckRun(token, owner, repo, headSha, findings, summary, blockOn, annotate, extraSummaryNote) {
+async function createCheckRun(token, owner, repo, headSha, findings, summary, blockOn, annotate, extraSummaryNote, 
+/** Overrides the findings-derived conclusion. Used when no scan ran. */
+forcedConclusion) {
     const client = getClient(token);
     const blockingFindings = findings.filter((f) => (0, config_1.shouldBlock)(f.severity, blockOn));
     const blockingCount = blockingFindings.length;
-    const conclusion = blockingCount > 0 ? 'failure' : 'success';
+    const conclusion = forcedConclusion ?? (blockingCount > 0 ? 'failure' : 'success');
     const annotations = annotate
         ? findings.slice(0, 50).map((f) => ({
             path: f.file,
@@ -34970,7 +34972,9 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.CONFIDENCE_ORDER = exports.SEVERITY_ORDER = exports.DEFAULT_CONFIG = exports.OPENCODE_GO_DEFAULT_MODEL = exports.OPENCODE_GO_PROVIDER = void 0;
+exports.VALID_CONFIDENCE = exports.VALID_BLOCK_ON = exports.CONFIDENCE_ORDER = exports.SEVERITY_ORDER = exports.DEFAULT_CONFIG = exports.OPENCODE_GO_DEFAULT_MODEL = exports.OPENCODE_GO_PROVIDER = void 0;
+exports.normalizeSeverity = normalizeSeverity;
+exports.normalizeConfidence = normalizeConfidence;
 exports.shouldBlock = shouldBlock;
 exports.deepMerge = deepMerge;
 exports.readConfiguredLlm = readConfiguredLlm;
@@ -34978,6 +34982,8 @@ exports.readConfiguredModel = readConfiguredModel;
 exports.resolveOpenCodeGoModel = resolveOpenCodeGoModel;
 exports.resolveRuntimeLlm = resolveRuntimeLlm;
 exports.loadConfig = loadConfig;
+exports.validateBlockOn = validateBlockOn;
+exports.validateConfidence = validateConfidence;
 exports.inferCategory = inferCategory;
 exports.filterFindings = filterFindings;
 const fs = __importStar(__nccwpck_require__(9896));
@@ -35035,11 +35041,29 @@ exports.CONFIDENCE_ORDER = {
     medium: 1,
     low: 0,
 };
+exports.VALID_BLOCK_ON = ['critical', 'high', 'medium', 'low', 'none'];
+exports.VALID_CONFIDENCE = ['high', 'medium', 'low'];
+/**
+ * Models do not reliably honor casing. Normalize before any comparison so
+ * `Critical`/`High` still gate the pull request.
+ */
+function normalizeSeverity(value) {
+    const key = String(value ?? '').trim().toLowerCase();
+    return key in exports.SEVERITY_ORDER ? key : 'info';
+}
+function normalizeConfidence(value) {
+    const key = String(value ?? '').trim().toLowerCase();
+    return key in exports.CONFIDENCE_ORDER ? key : 'low';
+}
 function shouldBlock(severity, threshold) {
-    if (threshold === 'none')
+    const thrKey = String(threshold ?? '').trim().toLowerCase();
+    if (thrKey === 'none')
         return false;
-    const sev = exports.SEVERITY_ORDER[severity] ?? -1;
-    const thr = exports.SEVERITY_ORDER[threshold] ?? 999;
+    const sev = exports.SEVERITY_ORDER[normalizeSeverity(severity)];
+    const thr = exports.SEVERITY_ORDER[thrKey];
+    // An unknown threshold must not silently disable the gate.
+    if (thr === undefined)
+        return sev >= exports.SEVERITY_ORDER.high;
     return sev >= thr;
 }
 function isPlainObject(v) {
@@ -35173,7 +35197,27 @@ function loadConfig(configPath, overrides = {}) {
     if (overrides.output) {
         config.output = { ...config.output, ...overrides.output };
     }
+    config.policy.block_on = validateBlockOn(config.policy.block_on, configPath);
+    config.policy.min_confidence = validateConfidence(config.policy.min_confidence, configPath);
     return config;
+}
+/**
+ * Fall back to the strict default instead of accepting a value that would make
+ * `shouldBlock` unintentionally permissive.
+ */
+function validateBlockOn(value, source = 'config') {
+    const key = String(value ?? '').trim().toLowerCase();
+    if (exports.VALID_BLOCK_ON.includes(key))
+        return key;
+    console.warn(`Invalid block_on '${String(value)}' in ${source}; using 'high'.`);
+    return exports.DEFAULT_CONFIG.policy.block_on;
+}
+function validateConfidence(value, source = 'config') {
+    const key = String(value ?? '').trim().toLowerCase();
+    if (exports.VALID_CONFIDENCE.includes(key))
+        return key;
+    console.warn(`Invalid min_confidence '${String(value)}' in ${source}; using 'medium'.`);
+    return exports.DEFAULT_CONFIG.policy.min_confidence;
 }
 /** Map free-text / CWE hints to a policy category when the model omits `category`. */
 function inferCategory(finding) {
@@ -35559,28 +35603,45 @@ async function run() {
         catch (llmErr) {
             const msg = llmErr instanceof Error ? llmErr.message : String(llmErr);
             core.error(`LLM call failed: ${msg}`);
+            // A scan that did not run must never look like a clean scan.
+            const conclusion = config.output.fail_on_error ? 'failure' : 'neutral';
+            try {
+                await (0, checks_1.createCheckRun)(token, owner, repo, headSha, [], `LLM call failed: ${msg}`, config.policy.block_on, false, config.output.fail_on_error
+                    ? 'Check failed because the LLM provider call errored (fail_on_error: true).'
+                    : 'fail_on_error is false — no security scan ran, so the gate did not pass.', conclusion);
+            }
+            catch {
+                /* ignore check create failure */
+            }
+            core.setOutput('findings-count', '0');
+            core.setOutput('blocking-findings-count', '0');
+            core.setOutput('conclusion', conclusion);
             if (config.output.fail_on_error) {
-                try {
-                    await (0, checks_1.createCheckRun)(token, owner, repo, headSha, [], `LLM call failed: ${msg}`, config.policy.block_on, false, 'Check failed because the LLM provider call errored (fail_on_error: true).');
-                }
-                catch {
-                    /* ignore check create failure */
-                }
                 core.setFailed(`LLM call failed: ${msg}`);
             }
             else {
-                core.warning('fail_on_error is false, marking neutral / continuing without findings.');
-                try {
-                    await (0, checks_1.createCheckRun)(token, owner, repo, headSha, [], `LLM call failed (non-blocking): ${msg}`, 'none', false, 'fail_on_error is false — check concluded success with no findings.');
-                }
-                catch {
-                    /* ignore */
-                }
+                core.warning('fail_on_error is false, so the job did not fail. No scan ran.');
             }
             return;
         }
         if (llmResponse.parse_error) {
             core.warning(`LLM JSON parse issue: ${llmResponse.parse_error}`);
+            // Unparseable output is not evidence of a clean diff. Fail closed unless
+            // the caller opted out, matching the provider-error behavior.
+            const conclusion = config.output.fail_on_error ? 'failure' : 'neutral';
+            try {
+                await (0, checks_1.createCheckRun)(token, owner, repo, headSha, [], `LLM response could not be parsed: ${llmResponse.parse_error}`, config.policy.block_on, false, 'The model did not return parseable JSON, so no findings were evaluated.', conclusion);
+            }
+            catch {
+                /* ignore check create failure */
+            }
+            core.setOutput('findings-count', '0');
+            core.setOutput('blocking-findings-count', '0');
+            core.setOutput('conclusion', conclusion);
+            if (config.output.fail_on_error) {
+                core.setFailed(`LLM response could not be parsed: ${llmResponse.parse_error}`);
+            }
+            return;
         }
         const filtered = (0, config_1.filterFindings)(llmResponse.findings, config);
         core.info(`LLM returned ${llmResponse.findings.length} findings, ${filtered.length} after filtering`);
@@ -35588,9 +35649,6 @@ async function run() {
         if (diffResult.truncated) {
             extraNotes.push(`⚠️ Diff was truncated (${diffResult.originalBytes} → ${config.context.max_diff_bytes} bytes). ` +
                 `Findings may be incomplete.`);
-        }
-        if (llmResponse.parse_error) {
-            extraNotes.push(`⚠️ LLM response parse issue: ${llmResponse.parse_error}`);
         }
         const blockingCount = filtered.filter((f) => (0, config_1.shouldBlock)(f.severity, config.policy.block_on)).length;
         const conclusion = blockingCount > 0 ? 'failure' : 'success';
@@ -35762,7 +35820,22 @@ function sleep(ms) {
 }
 function normalizeResponse(resp) {
     const r = (resp && typeof resp === 'object' ? resp : {});
-    const findings = Array.isArray(r.findings) ? r.findings : [];
+    const rawFindings = Array.isArray(r.findings) ? r.findings : [];
+    // Models vary casing and skip fields. Normalize so policy filtering and
+    // blocking decisions see canonical values.
+    const findings = rawFindings.map((item) => {
+        const f = (item && typeof item === 'object' ? item : {});
+        const startLine = Number(f.start_line);
+        const endLine = Number(f.end_line);
+        return {
+            ...f,
+            file: typeof f.file === 'string' ? f.file : '',
+            start_line: Number.isFinite(startLine) ? startLine : 1,
+            end_line: Number.isFinite(endLine) ? endLine : Number.isFinite(startLine) ? startLine : 1,
+            severity: (0, config_1.normalizeSeverity)(f.severity),
+            confidence: (0, config_1.normalizeConfidence)(f.confidence),
+        };
+    });
     const summary = typeof r.summary === 'string' ? r.summary : '';
     return { findings, summary };
 }

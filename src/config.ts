@@ -1,6 +1,13 @@
 import * as fs from 'fs';
 import * as yaml from 'js-yaml';
-import type { Finding, FindingCategory, SecurityScanConfig } from './types';
+import type {
+  BlockOn,
+  Confidence,
+  Finding,
+  FindingCategory,
+  SecurityScanConfig,
+  Severity,
+} from './types';
 
 export type { SecurityScanConfig } from './types';
 
@@ -73,10 +80,30 @@ export const CONFIDENCE_ORDER: Record<string, number> = {
   low: 0,
 };
 
+export const VALID_BLOCK_ON: readonly BlockOn[] = ['critical', 'high', 'medium', 'low', 'none'];
+export const VALID_CONFIDENCE: readonly Confidence[] = ['high', 'medium', 'low'];
+
+/**
+ * Models do not reliably honor casing. Normalize before any comparison so
+ * `Critical`/`High` still gate the pull request.
+ */
+export function normalizeSeverity(value: unknown): Severity {
+  const key = String(value ?? '').trim().toLowerCase();
+  return key in SEVERITY_ORDER ? (key as Severity) : 'info';
+}
+
+export function normalizeConfidence(value: unknown): Confidence {
+  const key = String(value ?? '').trim().toLowerCase();
+  return key in CONFIDENCE_ORDER ? (key as Confidence) : 'low';
+}
+
 export function shouldBlock(severity: string, threshold: string): boolean {
-  if (threshold === 'none') return false;
-  const sev = SEVERITY_ORDER[severity] ?? -1;
-  const thr = SEVERITY_ORDER[threshold] ?? 999;
+  const thrKey = String(threshold ?? '').trim().toLowerCase();
+  if (thrKey === 'none') return false;
+  const sev = SEVERITY_ORDER[normalizeSeverity(severity)];
+  const thr = SEVERITY_ORDER[thrKey];
+  // An unknown threshold must not silently disable the gate.
+  if (thr === undefined) return sev >= SEVERITY_ORDER.high;
   return sev >= thr;
 }
 
@@ -253,7 +280,28 @@ export function loadConfig(
     config.output = { ...config.output, ...overrides.output };
   }
 
+  config.policy.block_on = validateBlockOn(config.policy.block_on, configPath);
+  config.policy.min_confidence = validateConfidence(config.policy.min_confidence, configPath);
+
   return config;
+}
+
+/**
+ * Fall back to the strict default instead of accepting a value that would make
+ * `shouldBlock` unintentionally permissive.
+ */
+export function validateBlockOn(value: unknown, source = 'config'): BlockOn {
+  const key = String(value ?? '').trim().toLowerCase();
+  if ((VALID_BLOCK_ON as readonly string[]).includes(key)) return key as BlockOn;
+  console.warn(`Invalid block_on '${String(value)}' in ${source}; using 'high'.`);
+  return DEFAULT_CONFIG.policy.block_on;
+}
+
+export function validateConfidence(value: unknown, source = 'config'): Confidence {
+  const key = String(value ?? '').trim().toLowerCase();
+  if ((VALID_CONFIDENCE as readonly string[]).includes(key)) return key as Confidence;
+  console.warn(`Invalid min_confidence '${String(value)}' in ${source}; using 'medium'.`);
+  return DEFAULT_CONFIG.policy.min_confidence;
 }
 
 /** Map free-text / CWE hints to a policy category when the model omits `category`. */
