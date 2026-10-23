@@ -34817,6 +34817,8 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.sortFindings = sortFindings;
+exports.buildAnnotations = buildAnnotations;
 exports.createCheckRun = createCheckRun;
 exports.postPrComment = postPrComment;
 const core = __importStar(__nccwpck_require__(7484));
@@ -34826,6 +34828,69 @@ const GH_ATTEMPTS = 3;
 const GH_BASE_DELAY_MS = 500;
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+/**
+ * Sort most severe first so truncation keeps the findings that matter.
+ * Ties break on confidence, then file order for stable output.
+ */
+function sortFindings(findings) {
+    return [...findings].sort((a, b) => {
+        const sev = (config_1.SEVERITY_ORDER[b.severity] ?? 0) - (config_1.SEVERITY_ORDER[a.severity] ?? 0);
+        if (sev !== 0)
+            return sev;
+        const conf = (config_1.CONFIDENCE_ORDER[b.confidence] ?? 0) - (config_1.CONFIDENCE_ORDER[a.confidence] ?? 0);
+        if (conf !== 0)
+            return conf;
+        return a.file.localeCompare(b.file) || a.start_line - b.start_line;
+    });
+}
+/**
+ * Build annotations GitHub will accept: paths must be part of the PR and
+ * lines must fall inside a diff hunk. Invalid entries are dropped rather than
+ * failing the whole check run with a 422.
+ */
+function buildAnnotations(findings, scope, limit = 50) {
+    const out = [];
+    for (const f of findings) {
+        if (out.length >= limit)
+            break;
+        let start = Math.max(1, f.start_line || 1);
+        let end = Math.max(start, f.end_line || start);
+        if (scope) {
+            const ranges = scope.get(f.file);
+            if (!ranges) {
+                core.info(`Skipping annotation for ${f.file}: file is not part of the diff`);
+                continue;
+            }
+            const inRange = ranges.find((r) => start >= r.start && start <= r.end);
+            if (!inRange) {
+                const nearest = ranges.reduce((best, r) => (Math.abs(r.start - start) < Math.abs(best.start - start) ? r : best), ranges[0]);
+                if (!nearest) {
+                    core.info(`Skipping annotation for ${f.file}: no diff hunks`);
+                    continue;
+                }
+                start = nearest.start;
+                end = nearest.end;
+            }
+            else {
+                end = Math.min(end, inRange.end);
+                start = Math.max(start, inRange.start);
+            }
+        }
+        out.push({
+            path: f.file,
+            start_line: start,
+            end_line: end,
+            annotation_level: f.severity === 'critical' || f.severity === 'high'
+                ? 'failure'
+                : f.severity === 'medium'
+                    ? 'warning'
+                    : 'notice',
+            title: f.title,
+            message: `${f.severity.toUpperCase()} [${f.confidence}] ${f.description}\n\nRecommendation: ${f.recommendation}${f.cwe ? `\nCWE: ${f.cwe}` : ''}${f.owasp ? `\nOWASP: ${f.owasp}` : ''}${f.category ? `\nCategory: ${f.category}` : ''}`,
+        });
+    }
+    return out;
 }
 function getClient(token) {
     return github.getOctokit(token, { request: { timeout: 30000 } });
@@ -34838,6 +34903,10 @@ async function withRetry(label, fn) {
         }
         catch (e) {
             lastErr = e;
+            // 4xx responses are deterministic; retrying only delays the failure.
+            const status = e.status;
+            if (status !== undefined && status >= 400 && status < 500)
+                throw e;
             if (attempt === GH_ATTEMPTS)
                 break;
             const delay = GH_BASE_DELAY_MS * Math.pow(2, attempt - 1);
@@ -34850,25 +34919,15 @@ async function withRetry(label, fn) {
 }
 async function createCheckRun(token, owner, repo, headSha, findings, summary, blockOn, annotate, extraSummaryNote, 
 /** Overrides the findings-derived conclusion. Used when no scan ran. */
-forcedConclusion) {
+forcedConclusion, 
+/** When provided, annotations are clamped to files and lines in the diff. */
+annotationScope) {
     const client = getClient(token);
     const blockingFindings = findings.filter((f) => (0, config_1.shouldBlock)(f.severity, blockOn));
     const blockingCount = blockingFindings.length;
     const conclusion = forcedConclusion ?? (blockingCount > 0 ? 'failure' : 'success');
-    const annotations = annotate
-        ? findings.slice(0, 50).map((f) => ({
-            path: f.file,
-            start_line: Math.max(1, f.start_line || 1),
-            end_line: Math.max(f.start_line || 1, f.end_line || f.start_line || 1),
-            annotation_level: (f.severity === 'critical' || f.severity === 'high'
-                ? 'failure'
-                : f.severity === 'medium'
-                    ? 'warning'
-                    : 'notice'),
-            title: f.title,
-            message: `${f.severity.toUpperCase()} [${f.confidence}] ${f.description}\n\nRecommendation: ${f.recommendation}${f.cwe ? `\nCWE: ${f.cwe}` : ''}${f.owasp ? `\nOWASP: ${f.owasp}` : ''}${f.category ? `\nCategory: ${f.category}` : ''}`,
-        }))
-        : [];
+    const ordered = sortFindings(findings);
+    const annotations = annotate ? buildAnnotations(ordered, annotationScope, 50) : [];
     const title = blockingCount > 0
         ? `${blockingCount} blocking security finding(s)`
         : findings.length > 0
@@ -34881,7 +34940,7 @@ forcedConclusion) {
     if (extraSummaryNote) {
         fullSummary += `\n\n${extraSummaryNote}`;
     }
-    const check = await withRetry('GitHub checks.create', () => client.rest.checks.create({
+    const create = (withAnnotations) => client.rest.checks.create({
         owner,
         repo,
         name: 'SquidGate',
@@ -34890,10 +34949,26 @@ forcedConclusion) {
         conclusion: conclusion,
         output: {
             title,
-            summary: fullSummary,
-            annotations,
+            summary: withAnnotations
+                ? fullSummary
+                : `${fullSummary}\n\n_Annotations omitted: GitHub rejected the requested positions._`,
+            annotations: withAnnotations ? annotations : [],
         },
-    }));
+    });
+    let check;
+    try {
+        // Annotations are a presentation detail; a rejection must not cost the
+        // check run, which is what branch protection depends on.
+        check = await withRetry('GitHub checks.create', () => create(true));
+    }
+    catch (e) {
+        const status = e.status;
+        if (annotations.length === 0 || (status !== 422 && status !== 400))
+            throw e;
+        const msg = e instanceof Error ? e.message : String(e);
+        core.warning(`Annotation positions rejected (${msg}); creating the check run without annotations.`);
+        check = await withRetry('GitHub checks.create (no annotations)', () => create(false));
+    }
     core.info(`Check run created: ${check.data.html_url}`);
     return { conclusion, blockingCount };
 }
@@ -34905,7 +34980,8 @@ async function postPrComment(token, owner, repo, pullNumber, findings, summary, 
     if (blockingCount > 0) {
         body += `**⛔ ${blockingCount} finding(s) block merge.**\n\n`;
     }
-    const shown = findings.slice(0, 20);
+    const ordered = sortFindings(findings);
+    const shown = ordered.slice(0, 20);
     for (const f of shown) {
         const sev = f.severity.toUpperCase();
         body += `### ${sev} — ${f.title}\n`;
@@ -35420,6 +35496,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.extractAnnotationScope = extractAnnotationScope;
 exports.getPullRequestDiff = getPullRequestDiff;
 exports.getChangedFiles = getChangedFiles;
 const core = __importStar(__nccwpck_require__(7484));
@@ -35444,11 +35521,42 @@ function truncateDiff(diff, maxBytes) {
     if (originalBytes <= maxBytes) {
         return { diff, truncated: false, originalBytes };
     }
-    // Prefer character cut near maxBytes (byte-aware enough for ASCII-heavy diffs)
-    const cut = diff.substring(0, maxBytes);
+    // Cut on a byte boundary so a multi-byte character is not split.
+    const cut = Buffer.from(diff, 'utf8').subarray(0, maxBytes).toString('utf8')
+        .replace(/\uFFFD$/, '');
     const msg = `\n... [diff truncated: ${originalBytes} bytes → ${maxBytes} byte limit; ` +
         `raise context.max_diff_bytes if needed]\n`;
     return { diff: cut + msg, truncated: true, originalBytes };
+}
+/**
+ * Map each file in a unified diff to the new-file line ranges its hunks cover.
+ * GitHub rejects annotations outside these ranges.
+ */
+function extractAnnotationScope(diff) {
+    const scope = new Map();
+    let current = null;
+    for (const line of diff.split('\n')) {
+        const fileMatch = line.match(/^\+\+\+ (?:b\/)?(.+)$/);
+        if (fileMatch) {
+            current = fileMatch[1].trim();
+            if (current && current !== '/dev/null') {
+                if (!scope.has(current))
+                    scope.set(current, []);
+            }
+            else {
+                current = null;
+            }
+            continue;
+        }
+        const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
+        if (hunkMatch && current) {
+            const start = Number(hunkMatch[1]);
+            const count = hunkMatch[2] === undefined ? 1 : Number(hunkMatch[2]);
+            const end = count === 0 ? start : start + count - 1;
+            scope.get(current).push({ start, end });
+        }
+    }
+    return scope;
 }
 /**
  * Prefer GitHub API diff (reliable for forks / shallow clones).
@@ -35749,7 +35857,7 @@ async function run() {
         const blockingCount = filtered.filter((f) => (0, config_1.shouldBlock)(f.severity, config.policy.block_on)).length;
         const conclusion = blockingCount > 0 ? 'failure' : 'success';
         try {
-            await (0, checks_1.createCheckRun)(token, owner, repo, headSha, filtered, llmResponse.summary, config.policy.block_on, config.output.annotate_lines, extraNotes.length ? extraNotes.join('\n') : undefined);
+            await (0, checks_1.createCheckRun)(token, owner, repo, headSha, filtered, llmResponse.summary, config.policy.block_on, config.output.annotate_lines, extraNotes.length ? extraNotes.join('\n') : undefined, undefined, config.output.annotate_lines ? (0, diff_1.extractAnnotationScope)(diffResult.diff) : undefined);
         }
         catch (checkErr) {
             const msg = checkErr instanceof Error ? checkErr.message : String(checkErr);
@@ -35850,7 +35958,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.OPENCODE_GO_USER_AGENT = exports.OPENCODE_GO_CHAT_COMPLETIONS_URL = exports.OPENCODE_GO_DEFAULT_MODEL = void 0;
+exports.OPENCODE_GO_USER_AGENT = exports.OPENCODE_GO_CHAT_COMPLETIONS_URL = exports.LLM_REQUEST_TIMEOUT_MS = exports.OPENCODE_GO_DEFAULT_MODEL = void 0;
 exports.formatOpenCodeGoSessionId = formatOpenCodeGoSessionId;
 exports.resolveOpenCodeGoSessionId = resolveOpenCodeGoSessionId;
 exports.resolveOpenCodeGoRequestModel = resolveOpenCodeGoRequestModel;
@@ -35864,6 +35972,11 @@ Object.defineProperty(exports, "OPENCODE_GO_DEFAULT_MODEL", ({ enumerable: true,
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 800;
+/**
+ * Per-attempt request timeout. Without this a hung provider blocks the job
+ * until the workflow timeout.
+ */
+exports.LLM_REQUEST_TIMEOUT_MS = 120_000;
 /** OpenCode Go chat completions. `llm-base-url` is not used. */
 exports.OPENCODE_GO_CHAT_COMPLETIONS_URL = 'https://opencode.ai/inference/go/openai/v1/chat/completions';
 exports.OPENCODE_GO_USER_AGENT = 'SquidGate/1.0';
@@ -36027,7 +36140,10 @@ async function fetchWithRetry(url, init, label) {
     let lastErr;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
-            const res = await fetch(url, init);
+            const res = await fetch(url, {
+                ...init,
+                signal: AbortSignal.timeout(exports.LLM_REQUEST_TIMEOUT_MS),
+            });
             if (res.ok)
                 return res;
             const errText = await res.text();
@@ -36042,7 +36158,13 @@ async function fetchWithRetry(url, init, label) {
         catch (e) {
             if (e instanceof Error && e.message.includes(' error ('))
                 throw e;
-            lastErr = e instanceof Error ? e : new Error(String(e));
+            // A timeout is a network-level failure and is retried like one.
+            const timedOut = e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
+            lastErr = timedOut
+                ? new Error(`${label} timed out after ${exports.LLM_REQUEST_TIMEOUT_MS}ms`)
+                : e instanceof Error
+                    ? e
+                    : new Error(String(e));
             if (attempt === MAX_ATTEMPTS)
                 throw lastErr;
             const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);

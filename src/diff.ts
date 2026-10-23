@@ -37,12 +37,44 @@ function truncateDiff(diff: string, maxBytes: number): { diff: string; truncated
   if (originalBytes <= maxBytes) {
     return { diff, truncated: false, originalBytes };
   }
-  // Prefer character cut near maxBytes (byte-aware enough for ASCII-heavy diffs)
-  const cut = diff.substring(0, maxBytes);
+  // Cut on a byte boundary so a multi-byte character is not split.
+  const cut = Buffer.from(diff, 'utf8').subarray(0, maxBytes).toString('utf8')
+    .replace(/\uFFFD$/, '');
   const msg =
     `\n... [diff truncated: ${originalBytes} bytes → ${maxBytes} byte limit; ` +
     `raise context.max_diff_bytes if needed]\n`;
   return { diff: cut + msg, truncated: true, originalBytes };
+}
+
+/**
+ * Map each file in a unified diff to the new-file line ranges its hunks cover.
+ * GitHub rejects annotations outside these ranges.
+ */
+export function extractAnnotationScope(diff: string): Map<string, Array<{ start: number; end: number }>> {
+  const scope = new Map<string, Array<{ start: number; end: number }>>();
+  let current: string | null = null;
+
+  for (const line of diff.split('\n')) {
+    const fileMatch = line.match(/^\+\+\+ (?:b\/)?(.+)$/);
+    if (fileMatch) {
+      current = fileMatch[1].trim();
+      if (current && current !== '/dev/null') {
+        if (!scope.has(current)) scope.set(current, []);
+      } else {
+        current = null;
+      }
+      continue;
+    }
+    const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
+    if (hunkMatch && current) {
+      const start = Number(hunkMatch[1]);
+      const count = hunkMatch[2] === undefined ? 1 : Number(hunkMatch[2]);
+      const end = count === 0 ? start : start + count - 1;
+      scope.get(current)!.push({ start, end });
+    }
+  }
+
+  return scope;
 }
 
 /**
