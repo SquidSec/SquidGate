@@ -9,8 +9,8 @@ Action inputs override the same fields for one-off runs.
 version: 1
 
 llm:
-  provider: openai          # openai | anthropic | azure | google | custom
-  model: gpt-4o
+  provider: openai          # openai | anthropic | azure | google | custom | opencode-go
+  model: gpt-4o             # opencode-go: unset or gpt-4o becomes glm-5.3-flash
 
 policy:
   block_on: high            # critical | high | medium | low | none
@@ -71,6 +71,7 @@ output:
 | Azure OpenAI | `azure` | Set `llm-base-url` |
 | xAI Grok | `custom` | `llm-base-url: https://api.x.ai/v1` |
 | Ollama / vLLM / LiteLLM | `custom` | Your server URL |
+| OpenCode Go | `opencode-go` | Chat completions at `https://opencode.ai/inference/go/openai/v1/chat/completions`. Ignores `llm-base-url`. Unset or `gpt-4o` becomes `glm-5.3-flash`. Switching to this provider does not reuse another provider's model. See [models.md](models.md). |
 
 ## Custom rules
 
@@ -87,6 +88,6 @@ policy:
 |-------|-----------|
 | `llm-provider` | `llm.provider` |
 | `llm-model` | `llm.model` |
-| `llm-base-url` | endpoint (not stored in YAML) |
+| `llm-base-url` | endpoint (not stored in YAML; ignored for `opencode-go`) |
 | `block-on` | `policy.block_on` |
 | `config-path` | path to YAML |

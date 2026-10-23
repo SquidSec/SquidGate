@@ -6,6 +6,10 @@ Release tags: **`v{semver}-build.{N}`**, with floating **`v1`** / **`v1.0`**.
 
 ## Unreleased
 
+### Added
+
+- **OpenCode Go:** `llm-provider: opencode-go` posts the existing chat-completions body to OpenCode Go with `User-Agent: SquidGate/1.0` and a stable `x-opencode-session`. `llm-provider` and `llm-model` override only their own fields. An unset model, or `gpt-4o`, becomes `glm-5.3-flash`. Switching provider does not reuse the previous provider's model. See [docs/models.md](docs/models.md).
+
 ### Fixed / Improved
 
 - **Diff acquisition:** prefer GitHub API (fork/shallow-safe); git fallback uses `merge-base` and multiple base candidates; honor `lines_before` / `lines_after` via unified context

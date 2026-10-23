@@ -1,0 +1,9 @@
+{
+  "skills": [
+    {
+      "name": "squidgate",
+      "version": "2",
+      "files": ["SKILL.md"]
+    }
+  ]
+}

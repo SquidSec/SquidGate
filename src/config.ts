@@ -16,6 +16,9 @@ export interface LlmConfig {
   model: string;
 }
 
+export const OPENCODE_GO_PROVIDER = 'opencode-go';
+export const OPENCODE_GO_DEFAULT_MODEL = 'glm-5.3-flash';
+
 export const DEFAULT_CONFIG: SecurityScanConfig = {
   version: 1,
   llm: {
@@ -96,9 +99,118 @@ export function deepMerge<T extends Record<string, unknown>>(target: T, source: 
   return out as T;
 }
 
+export interface ConfiguredLlm {
+  provider: string;
+  model: string;
+}
+
+function readYamlString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/** Provider and model written in the config file. Missing fields are ''. */
+export function readConfiguredLlm(configPath: string): ConfiguredLlm {
+  const empty = { provider: '', model: '' };
+  if (!configPath || !fs.existsSync(configPath)) return empty;
+  try {
+    const parsed = yaml.load(fs.readFileSync(configPath, 'utf8')) as {
+      llm?: { provider?: unknown; model?: unknown };
+    } | null;
+    return {
+      provider: readYamlString(parsed?.llm?.provider),
+      model: readYamlString(parsed?.llm?.model),
+    };
+  } catch {
+    return empty;
+  }
+}
+
+/** Model id written in the config file, or '' when the file does not set one. */
+export function readConfiguredModel(configPath: string): string {
+  return readConfiguredLlm(configPath).model;
+}
+
+/**
+ * Model to use for OpenCode Go.
+ * An omitted model, or the OpenAI default `gpt-4o`, becomes `glm-5.3-flash`.
+ * Any other explicitly configured id is kept.
+ */
+export function resolveOpenCodeGoModel(model: string | undefined, modelExplicit: boolean): string {
+  const trimmed = (model || '').trim();
+  if (!modelExplicit || !trimmed || trimmed === DEFAULT_CONFIG.llm.model) {
+    return OPENCODE_GO_DEFAULT_MODEL;
+  }
+  return trimmed;
+}
+
+export interface RuntimeLlm {
+  provider: string;
+  model: string;
+  warnings: string[];
+}
+
+function oneLine(value: string): string {
+  return value.replace(/[\r\n\t]+/g, ' ').slice(0, 200);
+}
+
+/**
+ * Merge a config-file LLM with action inputs.
+ * Each input replaces only its own field. Changing provider without a model
+ * does not reuse the previous provider's model id.
+ */
+export function resolveRuntimeLlm(
+  fileProvider: string,
+  fileModel: string,
+  inputProvider: string,
+  inputModel: string
+): RuntimeLlm {
+  const fileProviderTrimmed = fileProvider.trim();
+  const fileModelTrimmed = fileModel.trim();
+  const inputProviderTrimmed = inputProvider.trim();
+  const inputModelTrimmed = inputModel.trim();
+
+  const effectiveFileProvider = fileProviderTrimmed || DEFAULT_CONFIG.llm.provider;
+  const provider = inputProviderTrimmed || effectiveFileProvider;
+  const providerChanged =
+    Boolean(inputProviderTrimmed) && inputProviderTrimmed !== effectiveFileProvider;
+
+  const warnings: string[] = [];
+  let model: string;
+
+  if (inputModelTrimmed) {
+    model = inputModelTrimmed;
+  } else if (fileModelTrimmed && !providerChanged) {
+    model = fileModelTrimmed;
+  } else {
+    model = provider === OPENCODE_GO_PROVIDER ? OPENCODE_GO_DEFAULT_MODEL : DEFAULT_CONFIG.llm.model;
+    if (fileModelTrimmed && providerChanged && fileModelTrimmed !== model) {
+      warnings.push(
+        `Not sending '${oneLine(fileModelTrimmed)}' to ${oneLine(provider)}; it was configured for ${oneLine(effectiveFileProvider)}. Using ${model}.`
+      );
+    }
+  }
+
+  if (provider === OPENCODE_GO_PROVIDER) {
+    const explicit = Boolean(inputModelTrimmed) || (Boolean(fileModelTrimmed) && !providerChanged);
+    const requested = explicit ? inputModelTrimmed || fileModelTrimmed : '';
+    const resolved = resolveOpenCodeGoModel(requested, explicit);
+    if (requested === DEFAULT_CONFIG.llm.model && resolved === OPENCODE_GO_DEFAULT_MODEL) {
+      warnings.push(`Not sending ${DEFAULT_CONFIG.llm.model} to OpenCode Go; using ${OPENCODE_GO_DEFAULT_MODEL}.`);
+    }
+    model = resolved;
+  }
+
+  return { provider, model, warnings };
+}
+
+export type ConfigOverrides = Omit<Partial<SecurityScanConfig>, 'llm' | 'policy'> & {
+  llm?: Partial<SecurityScanConfig['llm']>;
+  policy?: Partial<SecurityScanConfig['policy']>;
+};
+
 export function loadConfig(
   configPath: string,
-  overrides: Partial<SecurityScanConfig> = {}
+  overrides: ConfigOverrides = {}
 ): SecurityScanConfig {
   let config = JSON.parse(JSON.stringify(DEFAULT_CONFIG)) as SecurityScanConfig;
 
@@ -119,7 +231,10 @@ export function loadConfig(
   }
 
   if (overrides.llm) {
-    config.llm = { ...config.llm, ...overrides.llm };
+    config.llm = {
+      provider: overrides.llm.provider || config.llm.provider,
+      model: overrides.llm.model || config.llm.model,
+    };
   }
   if (overrides.policy) {
     const { categories, custom_rules, ...rest } = overrides.policy;

@@ -3,8 +3,8 @@
 version: 1
 
 llm:
-  provider: openai          # openai | anthropic | azure | google | custom
-  model: gpt-4o             # or claude-*, gemini-*, grok-*, etc.
+  provider: openai          # openai | anthropic | azure | google | custom | opencode-go
+  model: gpt-4o             # opencode-go: unset or gpt-4o becomes glm-5.3-flash
 
 policy:
   block_on: high            # critical | high | medium | low | none

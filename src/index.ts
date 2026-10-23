@@ -2,14 +2,16 @@ import * as core from '@actions/core';
 import * as github from '@actions/github';
 
 import {
-  DEFAULT_CONFIG,
   loadConfig,
   filterFindings,
   shouldBlock,
+  readConfiguredLlm,
+  resolveRuntimeLlm,
+  type ConfigOverrides,
 } from './config';
 import { buildSystemPrompt, buildUserPrompt } from './prompts';
 import { callLlm } from './llm';
-import type { BlockOn, LlmResponse, SecurityScanConfig } from './types';
+import type { BlockOn, LlmResponse } from './types';
 import { createCheckRun, postPrComment } from './checks';
 import { getChangedFiles, getPullRequestDiff } from './diff';
 
@@ -37,15 +39,22 @@ async function run(): Promise<void> {
 
     core.info(`Analyzing PR #${pullNumber} @ ${headSha}`);
 
-    const overrides: Partial<SecurityScanConfig> = {};
-    if (overrideProvider || overrideModel) {
-      overrides.llm = {
-        provider: overrideProvider || DEFAULT_CONFIG.llm.provider,
-        model: overrideModel || DEFAULT_CONFIG.llm.model,
-      };
+    const fileLlm = readConfiguredLlm(configPath);
+    const runtimeLlm = resolveRuntimeLlm(
+      fileLlm.provider,
+      fileLlm.model,
+      overrideProvider,
+      overrideModel
+    );
+    for (const warning of runtimeLlm.warnings) {
+      core.warning(warning);
     }
+
+    const overrides: ConfigOverrides = {
+      llm: { provider: runtimeLlm.provider, model: runtimeLlm.model },
+    };
     if (overrideBlockOn) {
-      overrides.policy = { block_on: overrideBlockOn } as SecurityScanConfig['policy'];
+      overrides.policy = { block_on: overrideBlockOn };
     }
 
     const config = loadConfig(configPath, overrides);
@@ -102,7 +111,11 @@ async function run(): Promise<void> {
         apiKey,
         systemPrompt,
         userPrompt,
-        baseUrl
+        baseUrl,
+        {
+          runId: context.runId,
+          runAttempt: (context as { runAttempt?: number | string }).runAttempt,
+        }
       );
     } catch (llmErr: unknown) {
       const msg = llmErr instanceof Error ? llmErr.message : String(llmErr);
@@ -223,9 +236,26 @@ async function run(): Promise<void> {
 
 run();
 
-export { loadConfig, filterFindings, shouldBlock, inferCategory, deepMerge } from './config';
+export {
+  loadConfig,
+  filterFindings,
+  shouldBlock,
+  inferCategory,
+  deepMerge,
+  readConfiguredModel,
+  readConfiguredLlm,
+  resolveOpenCodeGoModel,
+  resolveRuntimeLlm,
+} from './config';
 export { inferLanguage, buildSystemPrompt, buildUserPrompt } from './prompts';
-export { callLlm, extractJson, extractBalancedObject, normalizeResponse } from './llm';
+export {
+  callLlm,
+  extractJson,
+  extractBalancedObject,
+  normalizeResponse,
+  formatOpenCodeGoSessionId,
+  resolveOpenCodeGoSessionId,
+} from './llm';
 export { createCheckRun, postPrComment } from './checks';
 export { getPullRequestDiff, getChangedFiles } from './diff';
 export type { Finding, LlmResponse, SecurityScanConfig } from './types';

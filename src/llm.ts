@@ -1,11 +1,73 @@
 import * as core from '@actions/core';
+import { DEFAULT_CONFIG, OPENCODE_GO_DEFAULT_MODEL } from './config';
 import type { Finding, LlmResponse } from './types';
+
+export { OPENCODE_GO_DEFAULT_MODEL };
 
 export type { Finding, LlmResponse };
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 800;
+
+/** OpenCode Go chat completions. `llm-base-url` is not used. */
+export const OPENCODE_GO_CHAT_COMPLETIONS_URL =
+  'https://opencode.ai/inference/go/openai/v1/chat/completions';
+
+export const OPENCODE_GO_USER_AGENT = 'SquidGate/1.0';
+
+/** OpenAI default. Never send this to OpenCode Go. */
+const OPENAI_DEFAULT_MODEL = DEFAULT_CONFIG.llm.model;
+
+/** Header-safe session token. Invalid values fall back to squidgate-local. */
+const SESSION_TOKEN = /^[A-Za-z0-9._-]{1,128}$/;
+
+export interface OpenCodeGoRun {
+  runId?: string | number | null;
+  runAttempt?: string | number | null;
+}
+
+function normalizeRunValue(value: string | number | null | undefined): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'number' && !Number.isFinite(value)) return '';
+  const text = String(value).trim();
+  if (!text || text === 'NaN' || text === 'undefined' || !SESSION_TOKEN.test(text)) return '';
+  return text;
+}
+
+/**
+ * Format a stable OpenCode Go session id.
+ * Pure: does not read Actions context or the environment.
+ * Both values missing → `squidgate-local`.
+ */
+export function formatOpenCodeGoSessionId(
+  runId?: string | number | null,
+  runAttempt?: string | number | null
+): string {
+  const id = normalizeRunValue(runId);
+  const attempt = normalizeRunValue(runAttempt);
+  if (id && attempt) return `squidgate-${id}-${attempt}`;
+  if (id || attempt) return `squidgate-${id || attempt}`;
+  return 'squidgate-local';
+}
+
+/**
+ * Session id for a Go request. Explicit run values win per field, then
+ * GITHUB_RUN_ID / GITHUB_RUN_ATTEMPT, then `squidgate-local`.
+ */
+export function resolveOpenCodeGoSessionId(run?: OpenCodeGoRun): string {
+  const runId = normalizeRunValue(run?.runId) || normalizeRunValue(process.env.GITHUB_RUN_ID);
+  const runAttempt =
+    normalizeRunValue(run?.runAttempt) || normalizeRunValue(process.env.GITHUB_RUN_ATTEMPT);
+  return formatOpenCodeGoSessionId(runId, runAttempt);
+}
+
+/** Blank or the OpenAI default must not be posted to Go. Other ids pass through. */
+export function resolveOpenCodeGoRequestModel(model: string | undefined): string {
+  const trimmed = (model || '').trim();
+  if (!trimmed || trimmed === OPENAI_DEFAULT_MODEL) return OPENCODE_GO_DEFAULT_MODEL;
+  return trimmed;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -141,14 +203,25 @@ async function callOpenAICompatible(
   apiKey: string,
   systemPrompt: string,
   userPrompt: string,
-  baseUrl?: string
+  baseUrl?: string,
+  run?: OpenCodeGoRun
 ): Promise<LlmResponse> {
+  const requestModel = provider === 'opencode-go' ? resolveOpenCodeGoRequestModel(model) : model;
+
+  if (provider === 'opencode-go' && baseUrl && baseUrl.trim()) {
+    core.warning(
+      'llm-base-url is ignored for llm-provider opencode-go; calling the OpenCode Go chat completions endpoint.'
+    );
+  }
+
   const url =
-    provider === 'azure'
-      ? `${baseUrl || process.env.AZURE_OPENAI_ENDPOINT}/openai/deployments/${model}/chat/completions?api-version=2024-02-15-preview`
-      : provider === 'custom'
-        ? `${(baseUrl || 'http://localhost:11434/v1').replace(/\/$/, '')}/chat/completions`
-        : 'https://api.openai.com/v1/chat/completions';
+    provider === 'opencode-go'
+      ? OPENCODE_GO_CHAT_COMPLETIONS_URL
+      : provider === 'azure'
+        ? `${baseUrl || process.env.AZURE_OPENAI_ENDPOINT}/openai/deployments/${requestModel}/chat/completions?api-version=2024-02-15-preview`
+        : provider === 'custom'
+          ? `${(baseUrl || 'http://localhost:11434/v1').replace(/\/$/, '')}/chat/completions`
+          : 'https://api.openai.com/v1/chat/completions';
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -160,8 +233,15 @@ async function callOpenAICompatible(
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
+  // Go rejects a generic HTTP-library user agent and requires a stable session id.
+  // Do not attach these to openai, azure, custom, anthropic, or google.
+  if (provider === 'opencode-go') {
+    headers['User-Agent'] = OPENCODE_GO_USER_AGENT;
+    headers['x-opencode-session'] = resolveOpenCodeGoSessionId(run);
+  }
+
   const body = {
-    model,
+    model: requestModel,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
@@ -278,10 +358,11 @@ export async function callLlm(
   apiKey: string,
   systemPrompt: string,
   userPrompt: string,
-  baseUrl?: string
+  baseUrl?: string,
+  run?: OpenCodeGoRun
 ): Promise<LlmResponse> {
-  if (provider === 'openai' || provider === 'azure' || provider === 'custom') {
-    return callOpenAICompatible(provider, model, apiKey, systemPrompt, userPrompt, baseUrl);
+  if (provider === 'openai' || provider === 'azure' || provider === 'custom' || provider === 'opencode-go') {
+    return callOpenAICompatible(provider, model, apiKey, systemPrompt, userPrompt, baseUrl, run);
   }
   if (provider === 'anthropic') {
     return callAnthropic(model, apiKey, systemPrompt, userPrompt);

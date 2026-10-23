@@ -83,7 +83,7 @@ jobs:
 
 | Name | Value |
 |------|--------|
-| `LLM_API_KEY` | Your provider key (OpenAI, xAI, Anthropic, …) |
+| `LLM_API_KEY` | Your provider key (OpenAI, OpenCode Go, xAI, Anthropic, …) |
 
 ### 3. Block merges when SquidGate finds issues
 
@@ -131,6 +131,33 @@ Key: [console.x.ai](https://console.x.ai/)
 
 ---
 
+## Using OpenCode Go
+
+```yaml
+- uses: SquidSec/SquidGate@v1
+  with:
+    llm-api-key: ${{ secrets.LLM_API_KEY }}
+    llm-provider: opencode-go
+    llm-model: glm-5.3-flash
+```
+
+Store an [OpenCode Console](https://opencode.ai/console) key as the repository secret `LLM_API_KEY`. Never write a key into the workflow.
+
+Require both status checks: job **`squidgate`** and check run **`SquidGate`**.
+
+`llm-base-url` is ignored. `opencode-go` always sends the diff to OpenCode Go. An unset model, or `gpt-4o`, becomes `glm-5.3-flash`. Setting only `llm-provider` does not reuse a model configured for a different provider. Model notes: [docs/models.md](docs/models.md).
+
+Other OpenCode users can opt in to the SquidGate skill:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "skills": ["https://raw.githubusercontent.com/SquidSec/SquidGate/main/.opencode/skills/"]
+}
+```
+
+---
+
 ## Why SquidGate?
 
 | | Traditional SAST | SquidGate |
@@ -140,7 +167,7 @@ Key: [console.x.ai](https://console.x.ai/)
 | Context | Whole-repo noise | **Diff-first** + context |
 | Model | Fixed engine | **Your** LLM |
 | Merge gate | Separate tooling | Native GitHub Check |
-| Privacy | Vendor by default | **Only** your endpoint |
+| Privacy | Vendor by default | Your endpoint. `opencode-go` always calls OpenCode Go |
 
 ---
 
@@ -222,9 +249,9 @@ uses: SquidSec/SquidGate@abc123def
 | `llm-api-key` | **Yes** | — | Provider API key |
 | `github-token` | No | `${{ github.token }}` | `checks` + `pull-requests` + `contents` (retried on timeout) |
 | `config-path` | No | `.github/squidgate.yml` | Config path |
-| `llm-provider` | No | config / `openai` | `openai` \| `anthropic` \| `azure` \| `google` \| `custom` |
-| `llm-model` | No | config / `gpt-4o` | Model id |
-| `llm-base-url` | No | — | Azure / custom / xAI URL |
+| `llm-provider` | No | config / `openai` | `openai` \| `anthropic` \| `azure` \| `google` \| `custom` \| `opencode-go` |
+| `llm-model` | No | config / `gpt-4o` | Model id. For `opencode-go`, unset or `gpt-4o` becomes `glm-5.3-flash`. A model configured for another provider is not reused. |
+| `llm-base-url` | No | — | Azure / custom / xAI URL. Ignored for `opencode-go` |
 | `block-on` | No | config / `high` | Minimum failing severity |
 
 ## Outputs

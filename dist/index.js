@@ -34970,14 +34970,20 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.CONFIDENCE_ORDER = exports.SEVERITY_ORDER = exports.DEFAULT_CONFIG = void 0;
+exports.CONFIDENCE_ORDER = exports.SEVERITY_ORDER = exports.DEFAULT_CONFIG = exports.OPENCODE_GO_DEFAULT_MODEL = exports.OPENCODE_GO_PROVIDER = void 0;
 exports.shouldBlock = shouldBlock;
 exports.deepMerge = deepMerge;
+exports.readConfiguredLlm = readConfiguredLlm;
+exports.readConfiguredModel = readConfiguredModel;
+exports.resolveOpenCodeGoModel = resolveOpenCodeGoModel;
+exports.resolveRuntimeLlm = resolveRuntimeLlm;
 exports.loadConfig = loadConfig;
 exports.inferCategory = inferCategory;
 exports.filterFindings = filterFindings;
 const fs = __importStar(__nccwpck_require__(9896));
 const yaml = __importStar(__nccwpck_require__(4281));
+exports.OPENCODE_GO_PROVIDER = 'opencode-go';
+exports.OPENCODE_GO_DEFAULT_MODEL = 'glm-5.3-flash';
 exports.DEFAULT_CONFIG = {
     version: 1,
     llm: {
@@ -35054,6 +35060,82 @@ function deepMerge(target, source) {
     }
     return out;
 }
+function readYamlString(value) {
+    return typeof value === 'string' ? value.trim() : '';
+}
+/** Provider and model written in the config file. Missing fields are ''. */
+function readConfiguredLlm(configPath) {
+    const empty = { provider: '', model: '' };
+    if (!configPath || !fs.existsSync(configPath))
+        return empty;
+    try {
+        const parsed = yaml.load(fs.readFileSync(configPath, 'utf8'));
+        return {
+            provider: readYamlString(parsed?.llm?.provider),
+            model: readYamlString(parsed?.llm?.model),
+        };
+    }
+    catch {
+        return empty;
+    }
+}
+/** Model id written in the config file, or '' when the file does not set one. */
+function readConfiguredModel(configPath) {
+    return readConfiguredLlm(configPath).model;
+}
+/**
+ * Model to use for OpenCode Go.
+ * An omitted model, or the OpenAI default `gpt-4o`, becomes `glm-5.3-flash`.
+ * Any other explicitly configured id is kept.
+ */
+function resolveOpenCodeGoModel(model, modelExplicit) {
+    const trimmed = (model || '').trim();
+    if (!modelExplicit || !trimmed || trimmed === exports.DEFAULT_CONFIG.llm.model) {
+        return exports.OPENCODE_GO_DEFAULT_MODEL;
+    }
+    return trimmed;
+}
+function oneLine(value) {
+    return value.replace(/[\r\n\t]+/g, ' ').slice(0, 200);
+}
+/**
+ * Merge a config-file LLM with action inputs.
+ * Each input replaces only its own field. Changing provider without a model
+ * does not reuse the previous provider's model id.
+ */
+function resolveRuntimeLlm(fileProvider, fileModel, inputProvider, inputModel) {
+    const fileProviderTrimmed = fileProvider.trim();
+    const fileModelTrimmed = fileModel.trim();
+    const inputProviderTrimmed = inputProvider.trim();
+    const inputModelTrimmed = inputModel.trim();
+    const effectiveFileProvider = fileProviderTrimmed || exports.DEFAULT_CONFIG.llm.provider;
+    const provider = inputProviderTrimmed || effectiveFileProvider;
+    const providerChanged = Boolean(inputProviderTrimmed) && inputProviderTrimmed !== effectiveFileProvider;
+    const warnings = [];
+    let model;
+    if (inputModelTrimmed) {
+        model = inputModelTrimmed;
+    }
+    else if (fileModelTrimmed && !providerChanged) {
+        model = fileModelTrimmed;
+    }
+    else {
+        model = provider === exports.OPENCODE_GO_PROVIDER ? exports.OPENCODE_GO_DEFAULT_MODEL : exports.DEFAULT_CONFIG.llm.model;
+        if (fileModelTrimmed && providerChanged && fileModelTrimmed !== model) {
+            warnings.push(`Not sending '${oneLine(fileModelTrimmed)}' to ${oneLine(provider)}; it was configured for ${oneLine(effectiveFileProvider)}. Using ${model}.`);
+        }
+    }
+    if (provider === exports.OPENCODE_GO_PROVIDER) {
+        const explicit = Boolean(inputModelTrimmed) || (Boolean(fileModelTrimmed) && !providerChanged);
+        const requested = explicit ? inputModelTrimmed || fileModelTrimmed : '';
+        const resolved = resolveOpenCodeGoModel(requested, explicit);
+        if (requested === exports.DEFAULT_CONFIG.llm.model && resolved === exports.OPENCODE_GO_DEFAULT_MODEL) {
+            warnings.push(`Not sending ${exports.DEFAULT_CONFIG.llm.model} to OpenCode Go; using ${exports.OPENCODE_GO_DEFAULT_MODEL}.`);
+        }
+        model = resolved;
+    }
+    return { provider, model, warnings };
+}
 function loadConfig(configPath, overrides = {}) {
     let config = JSON.parse(JSON.stringify(exports.DEFAULT_CONFIG));
     if (fs.existsSync(configPath)) {
@@ -35070,7 +35152,10 @@ function loadConfig(configPath, overrides = {}) {
         }
     }
     if (overrides.llm) {
-        config.llm = { ...config.llm, ...overrides.llm };
+        config.llm = {
+            provider: overrides.llm.provider || config.llm.provider,
+            model: overrides.llm.model || config.llm.model,
+        };
     }
     if (overrides.policy) {
         const { categories, custom_rules, ...rest } = overrides.policy;
@@ -35410,7 +35495,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getChangedFiles = exports.getPullRequestDiff = exports.postPrComment = exports.createCheckRun = exports.normalizeResponse = exports.extractBalancedObject = exports.extractJson = exports.callLlm = exports.buildUserPrompt = exports.buildSystemPrompt = exports.inferLanguage = exports.deepMerge = exports.inferCategory = exports.shouldBlock = exports.filterFindings = exports.loadConfig = void 0;
+exports.getChangedFiles = exports.getPullRequestDiff = exports.postPrComment = exports.createCheckRun = exports.resolveOpenCodeGoSessionId = exports.formatOpenCodeGoSessionId = exports.normalizeResponse = exports.extractBalancedObject = exports.extractJson = exports.callLlm = exports.buildUserPrompt = exports.buildSystemPrompt = exports.inferLanguage = exports.resolveRuntimeLlm = exports.resolveOpenCodeGoModel = exports.readConfiguredLlm = exports.readConfiguredModel = exports.deepMerge = exports.inferCategory = exports.shouldBlock = exports.filterFindings = exports.loadConfig = void 0;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
 const config_1 = __nccwpck_require__(5751);
@@ -35436,13 +35521,14 @@ async function run() {
         const pullNumber = context.payload.pull_request.number;
         const headSha = context.payload.pull_request.head.sha;
         core.info(`Analyzing PR #${pullNumber} @ ${headSha}`);
-        const overrides = {};
-        if (overrideProvider || overrideModel) {
-            overrides.llm = {
-                provider: overrideProvider || config_1.DEFAULT_CONFIG.llm.provider,
-                model: overrideModel || config_1.DEFAULT_CONFIG.llm.model,
-            };
+        const fileLlm = (0, config_1.readConfiguredLlm)(configPath);
+        const runtimeLlm = (0, config_1.resolveRuntimeLlm)(fileLlm.provider, fileLlm.model, overrideProvider, overrideModel);
+        for (const warning of runtimeLlm.warnings) {
+            core.warning(warning);
         }
+        const overrides = {
+            llm: { provider: runtimeLlm.provider, model: runtimeLlm.model },
+        };
         if (overrideBlockOn) {
             overrides.policy = { block_on: overrideBlockOn };
         }
@@ -35465,7 +35551,10 @@ async function run() {
         core.info('Calling LLM for security analysis...');
         let llmResponse;
         try {
-            llmResponse = await (0, llm_1.callLlm)(config.llm.provider, config.llm.model, apiKey, systemPrompt, userPrompt, baseUrl);
+            llmResponse = await (0, llm_1.callLlm)(config.llm.provider, config.llm.model, apiKey, systemPrompt, userPrompt, baseUrl, {
+                runId: context.runId,
+                runAttempt: context.runAttempt,
+            });
         }
         catch (llmErr) {
             const msg = llmErr instanceof Error ? llmErr.message : String(llmErr);
@@ -35543,6 +35632,10 @@ Object.defineProperty(exports, "filterFindings", ({ enumerable: true, get: funct
 Object.defineProperty(exports, "shouldBlock", ({ enumerable: true, get: function () { return config_2.shouldBlock; } }));
 Object.defineProperty(exports, "inferCategory", ({ enumerable: true, get: function () { return config_2.inferCategory; } }));
 Object.defineProperty(exports, "deepMerge", ({ enumerable: true, get: function () { return config_2.deepMerge; } }));
+Object.defineProperty(exports, "readConfiguredModel", ({ enumerable: true, get: function () { return config_2.readConfiguredModel; } }));
+Object.defineProperty(exports, "readConfiguredLlm", ({ enumerable: true, get: function () { return config_2.readConfiguredLlm; } }));
+Object.defineProperty(exports, "resolveOpenCodeGoModel", ({ enumerable: true, get: function () { return config_2.resolveOpenCodeGoModel; } }));
+Object.defineProperty(exports, "resolveRuntimeLlm", ({ enumerable: true, get: function () { return config_2.resolveRuntimeLlm; } }));
 var prompts_2 = __nccwpck_require__(774);
 Object.defineProperty(exports, "inferLanguage", ({ enumerable: true, get: function () { return prompts_2.inferLanguage; } }));
 Object.defineProperty(exports, "buildSystemPrompt", ({ enumerable: true, get: function () { return prompts_2.buildSystemPrompt; } }));
@@ -35552,6 +35645,8 @@ Object.defineProperty(exports, "callLlm", ({ enumerable: true, get: function () 
 Object.defineProperty(exports, "extractJson", ({ enumerable: true, get: function () { return llm_2.extractJson; } }));
 Object.defineProperty(exports, "extractBalancedObject", ({ enumerable: true, get: function () { return llm_2.extractBalancedObject; } }));
 Object.defineProperty(exports, "normalizeResponse", ({ enumerable: true, get: function () { return llm_2.normalizeResponse; } }));
+Object.defineProperty(exports, "formatOpenCodeGoSessionId", ({ enumerable: true, get: function () { return llm_2.formatOpenCodeGoSessionId; } }));
+Object.defineProperty(exports, "resolveOpenCodeGoSessionId", ({ enumerable: true, get: function () { return llm_2.resolveOpenCodeGoSessionId; } }));
 var checks_2 = __nccwpck_require__(44);
 Object.defineProperty(exports, "createCheckRun", ({ enumerable: true, get: function () { return checks_2.createCheckRun; } }));
 Object.defineProperty(exports, "postPrComment", ({ enumerable: true, get: function () { return checks_2.postPrComment; } }));
@@ -35601,14 +35696,67 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.OPENCODE_GO_USER_AGENT = exports.OPENCODE_GO_CHAT_COMPLETIONS_URL = exports.OPENCODE_GO_DEFAULT_MODEL = void 0;
+exports.formatOpenCodeGoSessionId = formatOpenCodeGoSessionId;
+exports.resolveOpenCodeGoSessionId = resolveOpenCodeGoSessionId;
+exports.resolveOpenCodeGoRequestModel = resolveOpenCodeGoRequestModel;
 exports.normalizeResponse = normalizeResponse;
 exports.extractJson = extractJson;
 exports.extractBalancedObject = extractBalancedObject;
 exports.callLlm = callLlm;
 const core = __importStar(__nccwpck_require__(7484));
+const config_1 = __nccwpck_require__(5751);
+Object.defineProperty(exports, "OPENCODE_GO_DEFAULT_MODEL", ({ enumerable: true, get: function () { return config_1.OPENCODE_GO_DEFAULT_MODEL; } }));
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 800;
+/** OpenCode Go chat completions. `llm-base-url` is not used. */
+exports.OPENCODE_GO_CHAT_COMPLETIONS_URL = 'https://opencode.ai/inference/go/openai/v1/chat/completions';
+exports.OPENCODE_GO_USER_AGENT = 'SquidGate/1.0';
+/** OpenAI default. Never send this to OpenCode Go. */
+const OPENAI_DEFAULT_MODEL = config_1.DEFAULT_CONFIG.llm.model;
+/** Header-safe session token. Invalid values fall back to squidgate-local. */
+const SESSION_TOKEN = /^[A-Za-z0-9._-]{1,128}$/;
+function normalizeRunValue(value) {
+    if (value === undefined || value === null)
+        return '';
+    if (typeof value === 'number' && !Number.isFinite(value))
+        return '';
+    const text = String(value).trim();
+    if (!text || text === 'NaN' || text === 'undefined' || !SESSION_TOKEN.test(text))
+        return '';
+    return text;
+}
+/**
+ * Format a stable OpenCode Go session id.
+ * Pure: does not read Actions context or the environment.
+ * Both values missing → `squidgate-local`.
+ */
+function formatOpenCodeGoSessionId(runId, runAttempt) {
+    const id = normalizeRunValue(runId);
+    const attempt = normalizeRunValue(runAttempt);
+    if (id && attempt)
+        return `squidgate-${id}-${attempt}`;
+    if (id || attempt)
+        return `squidgate-${id || attempt}`;
+    return 'squidgate-local';
+}
+/**
+ * Session id for a Go request. Explicit run values win per field, then
+ * GITHUB_RUN_ID / GITHUB_RUN_ATTEMPT, then `squidgate-local`.
+ */
+function resolveOpenCodeGoSessionId(run) {
+    const runId = normalizeRunValue(run?.runId) || normalizeRunValue(process.env.GITHUB_RUN_ID);
+    const runAttempt = normalizeRunValue(run?.runAttempt) || normalizeRunValue(process.env.GITHUB_RUN_ATTEMPT);
+    return formatOpenCodeGoSessionId(runId, runAttempt);
+}
+/** Blank or the OpenAI default must not be posted to Go. Other ids pass through. */
+function resolveOpenCodeGoRequestModel(model) {
+    const trimmed = (model || '').trim();
+    if (!trimmed || trimmed === OPENAI_DEFAULT_MODEL)
+        return config_1.OPENCODE_GO_DEFAULT_MODEL;
+    return trimmed;
+}
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -35732,12 +35880,18 @@ async function fetchWithRetry(url, init, label) {
     }
     throw lastErr || new Error(`${label} failed`);
 }
-async function callOpenAICompatible(provider, model, apiKey, systemPrompt, userPrompt, baseUrl) {
-    const url = provider === 'azure'
-        ? `${baseUrl || process.env.AZURE_OPENAI_ENDPOINT}/openai/deployments/${model}/chat/completions?api-version=2024-02-15-preview`
-        : provider === 'custom'
-            ? `${(baseUrl || 'http://localhost:11434/v1').replace(/\/$/, '')}/chat/completions`
-            : 'https://api.openai.com/v1/chat/completions';
+async function callOpenAICompatible(provider, model, apiKey, systemPrompt, userPrompt, baseUrl, run) {
+    const requestModel = provider === 'opencode-go' ? resolveOpenCodeGoRequestModel(model) : model;
+    if (provider === 'opencode-go' && baseUrl && baseUrl.trim()) {
+        core.warning('llm-base-url is ignored for llm-provider opencode-go; calling the OpenCode Go chat completions endpoint.');
+    }
+    const url = provider === 'opencode-go'
+        ? exports.OPENCODE_GO_CHAT_COMPLETIONS_URL
+        : provider === 'azure'
+            ? `${baseUrl || process.env.AZURE_OPENAI_ENDPOINT}/openai/deployments/${requestModel}/chat/completions?api-version=2024-02-15-preview`
+            : provider === 'custom'
+                ? `${(baseUrl || 'http://localhost:11434/v1').replace(/\/$/, '')}/chat/completions`
+                : 'https://api.openai.com/v1/chat/completions';
     const headers = {
         'Content-Type': 'application/json',
     };
@@ -35747,8 +35901,14 @@ async function callOpenAICompatible(provider, model, apiKey, systemPrompt, userP
     else {
         headers['Authorization'] = `Bearer ${apiKey}`;
     }
+    // Go rejects a generic HTTP-library user agent and requires a stable session id.
+    // Do not attach these to openai, azure, custom, anthropic, or google.
+    if (provider === 'opencode-go') {
+        headers['User-Agent'] = exports.OPENCODE_GO_USER_AGENT;
+        headers['x-opencode-session'] = resolveOpenCodeGoSessionId(run);
+    }
     const body = {
-        model,
+        model: requestModel,
         messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
@@ -35821,9 +35981,9 @@ async function callGoogle(model, apiKey, systemPrompt, userPrompt, retryJsonOnly
     }
     return parsed;
 }
-async function callLlm(provider, model, apiKey, systemPrompt, userPrompt, baseUrl) {
-    if (provider === 'openai' || provider === 'azure' || provider === 'custom') {
-        return callOpenAICompatible(provider, model, apiKey, systemPrompt, userPrompt, baseUrl);
+async function callLlm(provider, model, apiKey, systemPrompt, userPrompt, baseUrl, run) {
+    if (provider === 'openai' || provider === 'azure' || provider === 'custom' || provider === 'opencode-go') {
+        return callOpenAICompatible(provider, model, apiKey, systemPrompt, userPrompt, baseUrl, run);
     }
     if (provider === 'anthropic') {
         return callAnthropic(model, apiKey, systemPrompt, userPrompt);

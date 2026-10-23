@@ -19,13 +19,13 @@ inputs:
     required: false
     default: '.github/squidgate.yml'
   llm-provider:
-    description: 'LLM provider: openai | anthropic | azure | google | custom'
+    description: 'LLM provider: openai | anthropic | azure | google | custom | opencode-go'
     required: false
   llm-model:
-    description: 'Model id (e.g. gpt-4o, claude-3-5-sonnet, grok-build-0.1)'
+    description: 'Model id (e.g. gpt-4o, claude-3-5-sonnet, grok-build-0.1, glm-5.3-flash). For opencode-go, unset or gpt-4o becomes glm-5.3-flash.'
     required: false
   llm-base-url:
-    description: 'Base URL for Azure, xAI, Ollama, or other OpenAI-compatible endpoints'
+    description: 'Base URL for Azure, xAI, Ollama, or other OpenAI-compatible endpoints. Ignored when llm-provider is opencode-go.'
     required: false
   block-on:
     description: 'Minimum severity that fails the check: critical | high | medium | low | none'

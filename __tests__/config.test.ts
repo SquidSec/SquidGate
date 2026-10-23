@@ -1,4 +1,15 @@
-import { loadConfig, DEFAULT_CONFIG, shouldBlock, filterFindings, inferCategory, deepMerge } from '../src/config';
+import {
+  loadConfig,
+  DEFAULT_CONFIG,
+  shouldBlock,
+  filterFindings,
+  inferCategory,
+  deepMerge,
+  readConfiguredModel,
+  readConfiguredLlm,
+  resolveOpenCodeGoModel,
+  resolveRuntimeLlm,
+} from '../src/config';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Finding } from '../src/types';
@@ -35,6 +46,67 @@ policy:
     expect(cfg.policy.categories.xss).toBe(false);
     expect(cfg.policy.categories.secrets).toBe(true);
     expect(cfg.policy.categories.injection).toBe(true); // still default
+  });
+
+  it('defaults OpenCode Go to glm-5.3-flash unless another model is explicit', () => {
+    expect(resolveOpenCodeGoModel(undefined, false)).toBe('glm-5.3-flash');
+    expect(resolveOpenCodeGoModel('gpt-4o', true)).toBe('glm-5.3-flash');
+    expect(resolveOpenCodeGoModel('gpt-4o', false)).toBe('glm-5.3-flash');
+    expect(resolveOpenCodeGoModel('kimi-k3', true)).toBe('kimi-k3');
+    expect(readConfiguredModel('/non/existent/path.yml')).toBe('');
+  });
+
+  it('reads an explicit model from the config file', () => {
+    fs.writeFileSync(tmpConfigPath, 'llm:\n  provider: opencode-go\n  model: kimi-k3\n');
+    expect(readConfiguredModel(tmpConfigPath)).toBe('kimi-k3');
+    expect(readConfiguredLlm(tmpConfigPath)).toEqual({ provider: 'opencode-go', model: 'kimi-k3' });
+  });
+
+  it('overrides only the llm field that was set', () => {
+    fs.writeFileSync(tmpConfigPath, 'llm:\n  provider: opencode-go\n  model: kimi-k3\n');
+    const cfg = loadConfig(tmpConfigPath, { llm: { model: 'glm-5.3-flash' } });
+    expect(cfg.llm.provider).toBe('opencode-go');
+    expect(cfg.llm.model).toBe('glm-5.3-flash');
+  });
+
+  it('keeps each llm input independent and does not reuse a foreign model', () => {
+    expect(resolveRuntimeLlm('opencode-go', 'kimi-k3', '', 'glm-5.3-flash')).toEqual({
+      provider: 'opencode-go',
+      model: 'glm-5.3-flash',
+      warnings: [],
+    });
+
+    const switched = resolveRuntimeLlm('openai', 'gpt-4o-mini', 'opencode-go', '');
+    expect(switched.provider).toBe('opencode-go');
+    expect(switched.model).toBe('glm-5.3-flash');
+    expect(switched.warnings.join('\n')).toContain('gpt-4o-mini');
+    expect(switched.warnings.join('\n')).not.toContain('sk-');
+
+    expect(resolveRuntimeLlm('opencode-go', '', '', '')).toMatchObject({
+      provider: 'opencode-go',
+      model: 'glm-5.3-flash',
+    });
+
+    expect(resolveRuntimeLlm('opencode-go', 'kimi-k3', '', '')).toMatchObject({
+      provider: 'opencode-go',
+      model: 'kimi-k3',
+      warnings: [],
+    });
+
+    expect(resolveRuntimeLlm('openai', 'gpt-4o', 'opencode-go', 'kimi-k3')).toEqual({
+      provider: 'opencode-go',
+      model: 'kimi-k3',
+      warnings: [],
+    });
+
+    const rewritten = resolveRuntimeLlm('opencode-go', 'gpt-4o', '', '');
+    expect(rewritten.model).toBe('glm-5.3-flash');
+    expect(rewritten.warnings.join('\n')).toMatch(/Not sending gpt-4o/);
+
+    expect(resolveRuntimeLlm('anthropic', 'claude-3-5-sonnet', '', 'claude-haiku')).toMatchObject({
+      provider: 'anthropic',
+      model: 'claude-haiku',
+    });
   });
 
   it('applies action input overrides', () => {

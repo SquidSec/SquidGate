@@ -41,16 +41,16 @@ jobs:
 | Input | Required | Description |
 |-------|----------|-------------|
 | `llm-api-key` | Yes | Your LLM API key (secret) |
-| `llm-provider` | No | `openai` · `anthropic` · `azure` · `google` · `custom` |
-| `llm-model` | No | e.g. `gpt-4o`, `grok-build-0.1` |
-| `llm-base-url` | No | xAI / Azure / Ollama endpoint |
+| `llm-provider` | No | `openai` · `anthropic` · `azure` · `google` · `custom` · `opencode-go` |
+| `llm-model` | No | e.g. `gpt-4o`, `grok-build-0.1`, `glm-5.3-flash` |
+| `llm-base-url` | No | xAI / Azure / Ollama endpoint (ignored for `opencode-go`) |
 | `block-on` | No | Fail at `high` (default), `critical`, `medium`, `low`, or `none` |
 
 ### Highlights
 
 - Language-agnostic (diff-first)
 - Strict-by-default policy (tunable)
-- OpenAI, Anthropic, Google, Azure, Grok/xAI, Ollama
+- OpenAI, Anthropic, Google, Azure, Grok/xAI, Ollama, OpenCode Go
 - Line annotations + optional PR comment
 - Native GitHub Check named **SquidGate**
 
