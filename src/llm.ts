@@ -1,5 +1,11 @@
 import * as core from '@actions/core';
-import { DEFAULT_CONFIG, OPENCODE_GO_DEFAULT_MODEL, normalizeConfidence, normalizeSeverity } from './config';
+import {
+  DEFAULT_CONFIG,
+  OPENCODE_GO_DEFAULT_MODEL,
+  canonicalCategory,
+  normalizeConfidence,
+  normalizeSeverity,
+} from './config';
 import type { Finding, LlmResponse } from './types';
 
 export { OPENCODE_GO_DEFAULT_MODEL };
@@ -82,6 +88,7 @@ export function normalizeResponse(resp: unknown): LlmResponse {
     const f = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
     const startLine = Number(f.start_line);
     const endLine = Number(f.end_line);
+    const category = canonicalCategory(f.category);
     return {
       ...f,
       file: typeof f.file === 'string' ? f.file : '',
@@ -89,6 +96,8 @@ export function normalizeResponse(resp: unknown): LlmResponse {
       end_line: Number.isFinite(endLine) ? endLine : Number.isFinite(startLine) ? startLine : 1,
       severity: normalizeSeverity(f.severity),
       confidence: normalizeConfidence(f.confidence),
+      // Drop unrecognized category strings so inference works on the text instead.
+      category,
     } as Finding;
   });
   const summary = typeof r.summary === 'string' ? r.summary : '';
