@@ -83,6 +83,104 @@ export const CONFIDENCE_ORDER: Record<string, number> = {
 export const VALID_BLOCK_ON: readonly BlockOn[] = ['critical', 'high', 'medium', 'low', 'none'];
 export const VALID_CONFIDENCE: readonly Confidence[] = ['high', 'medium', 'low'];
 
+/** Category keys the policy can toggle, in prompt order. */
+export const KNOWN_CATEGORIES: readonly FindingCategory[] = [
+  'secrets',
+  'injection',
+  'authn_authz',
+  'cryptography',
+  'insecure_deserialization',
+  'path_traversal',
+  'ssrf',
+  'xss',
+  'csrf',
+  'supply_chain',
+  'hardcoded_credentials',
+  'dangerous_functions',
+  'misconfiguration',
+];
+
+/**
+ * Spellings models produce for each category. Matching is done on a
+ * normalized key (lowercase, non-alphanumerics collapsed to `_`), so
+ * "SQL Injection", "sql-injection", and "SQLInjection" all collapse here.
+ */
+const CATEGORY_ALIASES: Record<string, FindingCategory> = {
+  secret: 'secrets',
+  secrets: 'secrets',
+  credential: 'secrets',
+  credentials: 'secrets',
+  hardcoded_credentials: 'hardcoded_credentials',
+  hardcoded_secret: 'hardcoded_credentials',
+  hardcoded_secrets: 'hardcoded_credentials',
+  hardcoded_password: 'hardcoded_credentials',
+  injection: 'injection',
+  sqli: 'injection',
+  sql_injection: 'injection',
+  command_injection: 'injection',
+  os_command_injection: 'injection',
+  code_injection: 'injection',
+  authn_authz: 'authn_authz',
+  authentication: 'authn_authz',
+  authorization: 'authn_authz',
+  auth: 'authn_authz',
+  broken_access_control: 'authn_authz',
+  access_control: 'authn_authz',
+  idor: 'authn_authz',
+  cryptography: 'cryptography',
+  crypto: 'cryptography',
+  weak_crypto: 'cryptography',
+  insecure_deserialization: 'insecure_deserialization',
+  deserialization: 'insecure_deserialization',
+  path_traversal: 'path_traversal',
+  directory_traversal: 'path_traversal',
+  ssrf: 'ssrf',
+  server_side_request_forgery: 'ssrf',
+  xss: 'xss',
+  cross_site_scripting: 'xss',
+  csrf: 'csrf',
+  cross_site_request_forgery: 'csrf',
+  supply_chain: 'supply_chain',
+  dependency: 'supply_chain',
+  dangerous_functions: 'dangerous_functions',
+  dangerous_function: 'dangerous_functions',
+  dangerous_api: 'dangerous_functions',
+  code_execution: 'dangerous_functions',
+  rce: 'dangerous_functions',
+  misconfiguration: 'misconfiguration',
+  misconfig: 'misconfiguration',
+  security_misconfiguration: 'misconfiguration',
+};
+
+function categoryKey(value: string): string {
+  return value
+    .trim()
+    // Split camelCase/PascalCase so "DangerousFunctions" -> "dangerous_functions".
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+/**
+ * Map a model-supplied category onto a policy key.
+ * Returns null when the value matches no known category, so the caller can
+ * fall back to text inference instead of trusting an arbitrary string.
+ */
+export function canonicalCategory(value: unknown): FindingCategory | null {
+  if (typeof value !== 'string') return null;
+  const key = categoryKey(value);
+  if (!key) return null;
+  const direct = CATEGORY_ALIASES[key];
+  if (direct) return direct;
+  // "SQLInjection" has no camel boundary, so it collapses to one word.
+  const collapsed = key.replace(/_/g, '');
+  for (const [alias, cat] of Object.entries(CATEGORY_ALIASES)) {
+    if (alias.replace(/_/g, '') === collapsed) return cat;
+  }
+  return null;
+}
+
 /**
  * Models do not reliably honor casing. Normalize before any comparison so
  * `Critical`/`High` still gate the pull request.
@@ -306,9 +404,8 @@ export function validateConfidence(value: unknown, source = 'config'): Confidenc
 
 /** Map free-text / CWE hints to a policy category when the model omits `category`. */
 export function inferCategory(finding: Finding): FindingCategory | null {
-  if (finding.category && typeof finding.category === 'string') {
-    return finding.category.toLowerCase().replace(/[\s-]+/g, '_');
-  }
+  const explicit = canonicalCategory(finding.category);
+  if (explicit) return explicit;
 
   const blob = [
     finding.title,
@@ -321,9 +418,10 @@ export function inferCategory(finding: Finding): FindingCategory | null {
     .toLowerCase();
 
   const rules: Array<[RegExp, FindingCategory]> = [
+    // Specific phrases must win over broad words like "password"/"key".
+    [/\bhardcoded\b.*\b(password|secret|key|token|credential)/, 'hardcoded_credentials'],
     [/\b(secret|api[_ ]?key|private[_ ]?key|token|password|credential|cwe-798|cwe-259)\b/, 'secrets'],
-    [/\b(hardcoded).*(password|secret|key|token)\b/, 'hardcoded_credentials'],
-    [/\b(sql\s*inject|command\s*inject|os\s*command|cwe-89|cwe-78|cwe-77|sqli)\b/, 'injection'],
+    [/\b(sql\s*injection|command\s*injection|code\s*injection|os\s+command|sqli|cwe-89|cwe-78|cwe-77)\b/, 'injection'],
     [/\b(xss|cross-site scripting|cwe-79)\b/, 'xss'],
     [/\b(ssrf|server-side request|cwe-918)\b/, 'ssrf'],
     [/\b(path\s*traversal|directory\s*traversal|cwe-22)\b/, 'path_traversal'],
@@ -331,7 +429,8 @@ export function inferCategory(finding: Finding): FindingCategory | null {
     [/\b(deserializ|pickle|yaml\.load|cwe-502)\b/, 'insecure_deserialization'],
     [/\b(md5|sha1|ecb|weak\s*crypto|cwe-327|cwe-328)\b/, 'cryptography'],
     [/\b(authn|authz|authorization|authentication|idor|broken access|cwe-287|cwe-862|cwe-863)\b/, 'authn_authz'],
-    [/\b(eval\(|exec\(|child_process|dangerous function)\b/, 'dangerous_functions'],
+    // `eval(` / `exec(` end on a non-word char, so a trailing \b can never match.
+    [/\b(eval\s*\(|exec\s*\(|child_process|dangerous\s+function|code\s+execution|cwe-95)/, 'dangerous_functions'],
     [/\b(supply.?chain|dependency|typosquat|malicious package)\b/, 'supply_chain'],
     [/\b(misconfig|debug\s*=\s*true|permissive cors)\b/, 'misconfiguration'],
   ];
@@ -351,7 +450,7 @@ export function filterFindings(findings: Finding[], config: SecurityScanConfig):
   const disabled = new Set(
     Object.entries(categories)
       .filter(([, enabled]) => enabled === false)
-      .map(([k]) => k.toLowerCase())
+      .map(([k]) => categoryKey(k))
   );
 
   return findings.filter((f) => {
@@ -365,9 +464,6 @@ export function filterFindings(findings: Finding[], config: SecurityScanConfig):
       // Unknown category: keep (do not drop on inference failure)
       return true;
     }
-    if (disabled.has(cat.toLowerCase())) return false;
-    // Explicit false for this key
-    if (categories[cat] === false) return false;
-    return true;
+    return !disabled.has(categoryKey(cat));
   });
 }
