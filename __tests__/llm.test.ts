@@ -3,6 +3,7 @@ import {
   extractJson,
   extractBalancedObject,
   normalizeResponse,
+  repairJson,
   callLlm,
   formatOpenCodeGoSessionId,
   resolveOpenCodeGoSessionId,
@@ -286,5 +287,50 @@ describe('callLlm HTTP requests', () => {
     expect(headerNames(customHeaders)).not.toContain('x-opencode-session');
     expect(customHeaders['User-Agent']).toBeUndefined();
     expect(customHeaders['x-opencode-session']).toBeUndefined();
+  });
+});
+
+describe('extractJson robustness', () => {
+  it('prefers the answer over a leading schema example', () => {
+    const text = 'Schema: {"findings":[],"summary":"template"} Real: {"findings":[{"severity":"critical","title":"RCE"}],"summary":"real"}';
+    const out = extractJson(text);
+    expect(out.summary).toBe('real');
+    expect(out.findings).toHaveLength(1);
+  });
+
+  it('still returns a genuinely empty result', () => {
+    const out = extractJson('{"findings":[],"summary":"clean"}');
+    expect(out.summary).toBe('clean');
+    expect(out.findings).toEqual([]);
+    expect(out.parse_error).toBeUndefined();
+  });
+
+  it('recovers from trailing commas', () => {
+    expect(extractJson('{"findings":[],"summary":"ok",}').summary).toBe('ok');
+  });
+
+  it('recovers from single-quoted JSON', () => {
+    expect(extractJson("{'findings':[],'summary':'ok'}").summary).toBe('ok');
+  });
+
+  it('recovers from smart quotes', () => {
+    expect(extractJson('{\u201cfindings\u201d:[],\u201csummary\u201d:\u201cok\u201d}').summary).toBe('ok');
+  });
+
+  it('accepts a bare array of findings', () => {
+    const out = extractJson('[{"severity":"high","title":"a"},{"severity":"low","title":"b"}]');
+    expect(out.findings).toHaveLength(2);
+    expect(out.parse_error).toBeUndefined();
+  });
+
+  it('fails closed on text with no JSON', () => {
+    const out = extractJson('I cannot help with that.');
+    expect(out.findings).toEqual([]);
+    expect(out.parse_error).toBeTruthy();
+  });
+
+  it('repairJson leaves valid JSON untouched', () => {
+    const valid = '{"findings":[{"summary":"it\'s fine"}],"summary":"ok"}';
+    expect(repairJson(valid)).toBe(valid);
   });
 });
